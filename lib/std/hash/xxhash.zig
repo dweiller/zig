@@ -314,7 +314,7 @@ pub const XxHash32 = struct {
         };
     }
 
-    pub fn update(self: *XxHash32, input: []const u8) void {
+    pub fn update(self: *XxHash32, input: anytype) void {
         validateType(@TypeOf(input));
 
         if (input.len < 16 - self.buf_len) {
