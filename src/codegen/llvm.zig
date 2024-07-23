@@ -1127,12 +1127,12 @@ pub const Object = struct {
 
         for (mod.decl_exports.keys(), mod.decl_exports.values()) |decl_index, export_list| {
             const global = object.decl_map.get(decl_index) orelse continue;
-            try resolveGlobalCollisions(object, global, export_list.items);
+            try resolveGlobalCollisions(object, global, export_list.sliceConst());
         }
 
         for (mod.value_exports.keys(), mod.value_exports.values()) |val, export_list| {
             const global = object.anon_decl_map.get(val) orelse continue;
-            try resolveGlobalCollisions(object, global, export_list.items);
+            try resolveGlobalCollisions(object, global, export_list.sliceConst());
         }
     }
 

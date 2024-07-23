@@ -1139,7 +1139,7 @@ pub fn updateFunc(self: *Coff, mod: *Module, func_index: InternPool.Index, air: 
     Atom.freeRelocations(self, atom_index);
 
     const gpa = self.base.comp.gpa;
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     const res = try codegen.generateFunction(
@@ -1152,7 +1152,7 @@ pub fn updateFunc(self: *Coff, mod: *Module, func_index: InternPool.Index, air: 
         .none,
     );
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| {
             func.analysis(&mod.intern_pool).state = .codegen_failure;
             try mod.failed_decls.put(mod.gpa, decl_index, em);
@@ -1202,7 +1202,7 @@ const LowerConstResult = union(enum) {
 fn lowerConst(self: *Coff, name: []const u8, val: Value, required_alignment: InternPool.Alignment, sect_id: u16, src_loc: Module.SrcLoc) !LowerConstResult {
     const gpa = self.base.comp.gpa;
 
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     const atom_index = try self.createAtom();
@@ -1214,7 +1214,7 @@ fn lowerConst(self: *Coff, name: []const u8, val: Value, required_alignment: Int
         .parent_atom_index = self.getAtom(atom_index).getSymbolIndex().?,
     });
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| return .{ .fail = em },
     };
 
@@ -1268,7 +1268,7 @@ pub fn updateDecl(
     Atom.freeRelocations(self, atom_index);
     const atom = self.getAtom(atom_index);
 
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     const decl_val = if (decl.val.getVariable(mod)) |variable| Value.fromInterned(variable.init) else decl.val;
@@ -1276,7 +1276,7 @@ pub fn updateDecl(
         .parent_atom_index = atom.getSymbolIndex().?,
     });
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| {
             decl.analysis = .codegen_failure;
             try mod.failed_decls.put(mod.gpa, decl_index, em);
@@ -1301,7 +1301,7 @@ fn updateLazySymbolAtom(
     const mod = self.base.comp.module.?;
 
     var required_alignment: InternPool.Alignment = .none;
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     const name = try std.fmt.allocPrint(gpa, "__lazy_{s}_{}", .{
@@ -1331,7 +1331,7 @@ fn updateLazySymbolAtom(
         .{ .parent_atom_index = local_sym_index },
     );
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| {
             log.err("{s}", .{em.msg});
             return error.CodegenFail;

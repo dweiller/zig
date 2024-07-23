@@ -12,7 +12,7 @@ const asm_indent_delta = 2;
 
 pub const Error = Ast.RenderError;
 
-const Ais = AutoIndentingStream(std.ArrayList(u8).Writer);
+const Ais = AutoIndentingStream(std.ArrayListInline(u8).Writer);
 
 pub const Fixups = struct {
     /// The key is the mut token (`var`/`const`) of the variable declaration
@@ -79,7 +79,7 @@ const Render = struct {
     fixups: Fixups,
 };
 
-pub fn renderTree(buffer: *std.ArrayList(u8), tree: Ast, fixups: Fixups) Error!void {
+pub fn renderTree(buffer: *std.ArrayListInline(u8), tree: Ast, fixups: Fixups) Error!void {
     assert(tree.errors.len == 0); // Cannot render an invalid tree.
     var auto_indenting_stream = Ais{
         .indent_delta = indent_delta,
@@ -2153,7 +2153,7 @@ fn renderArrayInit(
 
         const section_exprs = row_exprs[0..section_end];
 
-        var sub_expr_buffer = std.ArrayList(u8).init(gpa);
+        var sub_expr_buffer = std.ArrayListInline(u8).init(gpa);
         defer sub_expr_buffer.deinit();
 
         const sub_expr_buffer_starts = try gpa.alloc(usize, section_exprs.len + 1);
@@ -2175,13 +2175,13 @@ fn renderArrayInit(
         var single_line = true;
         var contains_newline = false;
         for (section_exprs, 0..) |expr, i| {
-            const start = sub_expr_buffer.items.len;
+            const start = sub_expr_buffer.unmanaged.info.len;
             sub_expr_buffer_starts[i] = start;
 
             if (i + 1 < section_exprs.len) {
                 try renderExpression(&sub_render, expr, .none);
-                const width = sub_expr_buffer.items.len - start;
-                const this_contains_newline = mem.indexOfScalar(u8, sub_expr_buffer.items[start..], '\n') != null;
+                const width = sub_expr_buffer.unmanaged.info.len - start;
+                const this_contains_newline = mem.indexOfScalar(u8, sub_expr_buffer.sliceConst()[start..], '\n') != null;
                 contains_newline = contains_newline or this_contains_newline;
                 expr_widths[i] = width;
                 expr_newlines[i] = this_contains_newline;
@@ -2200,8 +2200,8 @@ fn renderArrayInit(
                 }
             } else {
                 try renderExpression(&sub_render, expr, .comma);
-                const width = sub_expr_buffer.items.len - start - 2;
-                const this_contains_newline = mem.indexOfScalar(u8, sub_expr_buffer.items[start .. sub_expr_buffer.items.len - 1], '\n') != null;
+                const width = sub_expr_buffer.unmanaged.info.len - start - 2;
+                const this_contains_newline = mem.indexOfScalar(u8, sub_expr_buffer.sliceConst()[start .. sub_expr_buffer.unmanaged.info.len - 1], '\n') != null;
                 contains_newline = contains_newline or this_contains_newline;
                 expr_widths[i] = width;
                 expr_newlines[i] = contains_newline;
@@ -2212,14 +2212,14 @@ fn renderArrayInit(
                 }
             }
         }
-        sub_expr_buffer_starts[section_exprs.len] = sub_expr_buffer.items.len;
+        sub_expr_buffer_starts[section_exprs.len] = sub_expr_buffer.unmanaged.info.len;
 
         // Render exprs in current section.
         column_counter = 0;
         for (section_exprs, 0..) |expr, i| {
             const start = sub_expr_buffer_starts[i];
             const end = sub_expr_buffer_starts[i + 1];
-            const expr_text = sub_expr_buffer.items[start..end];
+            const expr_text = sub_expr_buffer.sliceConst()[start..end];
             if (!expr_newlines[i]) {
                 try ais.writer().writeAll(expr_text);
             } else {
@@ -3214,7 +3214,7 @@ fn anythingBetween(tree: Ast, start_token: Ast.TokenIndex, end_token: Ast.TokenI
     return false;
 }
 
-fn writeFixingWhitespace(writer: std.ArrayList(u8).Writer, slice: []const u8) Error!void {
+fn writeFixingWhitespace(writer: std.ArrayListInline(u8).Writer, slice: []const u8) Error!void {
     for (slice) |byte| switch (byte) {
         '\t' => try writer.writeAll(" " ** 4),
         '\r' => {},

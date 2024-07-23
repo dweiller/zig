@@ -264,7 +264,7 @@ pub fn updateDecl(
     }
     const val = if (decl.val.getVariable(mod)) |variable| Value.fromInterned(variable.init) else decl.val;
 
-    var code_writer = std.ArrayList(u8).init(gpa);
+    var code_writer = std.ArrayListInline(u8).init(gpa);
     defer code_writer.deinit();
 
     const res = try codegen.generateSymbol(
@@ -277,7 +277,7 @@ pub fn updateDecl(
     );
 
     const code = switch (res) {
-        .ok => code_writer.items,
+        .ok => code_writer.sliceConst(),
         .fail => |em| {
             decl.analysis = .codegen_failure;
             try mod.failed_decls.put(mod.gpa, decl_index, em);
@@ -304,7 +304,7 @@ pub fn updateFunc(
     const atom = wasm_file.getAtomPtr(atom_index);
     atom.clear();
 
-    var code_writer = std.ArrayList(u8).init(gpa);
+    var code_writer = std.ArrayListInline(u8).init(gpa);
     defer code_writer.deinit();
     const result = try codegen.generateFunction(
         &wasm_file.base,
@@ -317,7 +317,7 @@ pub fn updateFunc(
     );
 
     const code = switch (result) {
-        .ok => code_writer.items,
+        .ok => code_writer.sliceConst(),
         .fail => |em| {
             decl.analysis = .codegen_failure;
             try mod.failed_decls.put(mod.gpa, decl_index, em);

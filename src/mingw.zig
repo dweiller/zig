@@ -26,7 +26,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
 
     switch (crt_file) {
         .crt2_o => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try add_cc_args(comp, arena, &args);
             if (comp.mingw_unicode_entry_point) {
                 try args.appendSlice(&.{ "-DUNICODE", "-D_UNICODE" });
@@ -36,7 +36,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                     .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                         "libc", "mingw", "crt", "crtexe.c",
                     }),
-                    .extra_flags = args.items,
+                    .extra_flags = args.slice(),
                     .owner = undefined,
                 },
             };
@@ -44,14 +44,14 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
         },
 
         .dllcrt2_o => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try add_cc_args(comp, arena, &args);
             var files = [_]Compilation.CSourceFile{
                 .{
                     .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                         "libc", "mingw", "crt", "crtdll.c",
                     }),
-                    .extra_flags = args.items,
+                    .extra_flags = args.slice(),
                     .owner = undefined,
                 },
             };
@@ -59,16 +59,16 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
         },
 
         .mingw32_lib => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try add_cc_args(comp, arena, &args);
-            var c_source_files = std.ArrayList(Compilation.CSourceFile).init(arena);
+            var c_source_files = std.ArrayListInline(Compilation.CSourceFile).init(arena);
 
             for (mingw32_generic_src) |dep| {
                 try c_source_files.append(.{
                     .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                         "libc", "mingw", dep,
                     }),
-                    .extra_flags = args.items,
+                    .extra_flags = args.slice(),
                     .owner = undefined,
                 });
             }
@@ -79,7 +79,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                         .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                             "libc", "mingw", dep,
                         }),
-                        .extra_flags = args.items,
+                        .extra_flags = args.slice(),
                         .owner = undefined,
                     });
                 }
@@ -89,7 +89,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                             .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                                 "libc", "mingw", dep,
                             }),
-                            .extra_flags = args.items,
+                            .extra_flags = args.slice(),
                             .owner = undefined,
                         });
                     }
@@ -100,7 +100,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                         .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                             "libc", "mingw", dep,
                         }),
-                        .extra_flags = args.items,
+                        .extra_flags = args.slice(),
                         .owner = undefined,
                     });
                 }
@@ -110,14 +110,14 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                         .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                             "libc", "mingw", dep,
                         }),
-                        .extra_flags = args.items,
+                        .extra_flags = args.slice(),
                         .owner = undefined,
                     });
                 }
             } else {
                 @panic("unsupported arch");
             }
-            return comp.build_crt_file("mingw32", .Lib, .@"mingw-w64 mingw32.lib", prog_node, c_source_files.items);
+            return comp.build_crt_file("mingw32", .Lib, .@"mingw-w64 mingw32.lib", prog_node, c_source_files.slice());
         },
     }
 }
@@ -125,7 +125,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
 fn add_cc_args(
     comp: *Compilation,
     arena: Allocator,
-    args: *std.ArrayList([]const u8),
+    args: *std.ArrayListInline([]const u8),
 ) error{OutOfMemory}!void {
     try args.appendSlice(&[_][]const u8{
         "-DHAVE_CONFIG_H",
@@ -326,7 +326,7 @@ fn findDef(
         else => unreachable,
     };
 
-    var override_path = std.ArrayList(u8).init(allocator);
+    var override_path = std.ArrayListInline(u8).init(allocator);
     defer override_path.deinit();
 
     const s = path.sep_str;
@@ -339,7 +339,7 @@ fn findDef(
         } else {
             try override_path.writer().print(fmt_path, .{ lib_path, lib_name });
         }
-        if (std.fs.cwd().access(override_path.items, .{})) |_| {
+        if (std.fs.cwd().access(override_path.slice(), .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -356,7 +356,7 @@ fn findDef(
         } else {
             try override_path.writer().print(fmt_path, .{lib_name});
         }
-        if (std.fs.cwd().access(override_path.items, .{})) |_| {
+        if (std.fs.cwd().access(override_path.slice(), .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -373,7 +373,7 @@ fn findDef(
         } else {
             try override_path.writer().print(fmt_path, .{lib_name});
         }
-        if (std.fs.cwd().access(override_path.items, .{})) |_| {
+        if (std.fs.cwd().access(override_path.slice(), .{})) |_| {
             return override_path.toOwnedSlice();
         } else |err| switch (err) {
             error.FileNotFound => {},

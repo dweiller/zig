@@ -91,8 +91,8 @@ fn iterateAndFilterByVersion(
                 std.mem.order(u8, lhs.build, rhs.build);
         }
     };
-    var versions = std.ArrayList(Version).init(allocator);
-    var dirs = std.ArrayList([]const u8).init(allocator);
+    var versions = std.ArrayListInline(Version).init(allocator);
+    var dirs = std.ArrayListInline([]const u8).init(allocator);
     defer {
         versions.deinit();
         for (dirs.items) |filtered_dir| allocator.free(filtered_dir);
@@ -449,7 +449,7 @@ pub const Installation = struct {
                 return error.PathTooLong;
             }
 
-            var path = std.ArrayList(u8).fromOwnedSlice(allocator, path_maybe_with_trailing_slash);
+            var path = std.ArrayListInline(u8).fromOwnedSlice(allocator, path_maybe_with_trailing_slash);
             errdefer path.deinit();
 
             // String might contain trailing slash, so trim it here
@@ -520,7 +520,7 @@ pub const Installation = struct {
                 return error.PathTooLong;
             }
 
-            var path = std.ArrayList(u8).fromOwnedSlice(allocator, path_maybe_with_trailing_slash);
+            var path = std.ArrayListInline(u8).fromOwnedSlice(allocator, path_maybe_with_trailing_slash);
             errdefer path.deinit();
 
             // String might contain trailing slash, so trim it here
@@ -546,7 +546,7 @@ pub const Installation = struct {
                 return error.VersionTooLong;
             }
 
-            var version = std.ArrayList(u8).fromOwnedSlice(allocator, version_without_0);
+            var version = std.ArrayListInline(u8).fromOwnedSlice(allocator, version_without_0);
             errdefer version.deinit();
 
             try version.appendSlice(".0");
@@ -750,7 +750,7 @@ const MsvcLibDir = struct {
         defer instances_dir.close();
 
         var state_subpath_buf: [std.fs.MAX_NAME_BYTES + 32]u8 = undefined;
-        var latest_version_lib_dir = std.ArrayListUnmanaged(u8){};
+        var latest_version_lib_dir = std.ArrayListInlineUnmanaged(u8){};
         errdefer latest_version_lib_dir.deinit(allocator);
 
         var latest_version: u64 = 0;
@@ -801,7 +801,7 @@ const MsvcLibDir = struct {
     }
 
     fn libDirFromInstallationPath(allocator: std.mem.Allocator, installation_path: []const u8) error{ OutOfMemory, PathNotFound }![]const u8 {
-        var lib_dir_buf = try std.ArrayList(u8).initCapacity(allocator, installation_path.len + 64);
+        var lib_dir_buf = try std.ArrayListInline(u8).initCapacity(allocator, installation_path.len + 64);
         errdefer lib_dir_buf.deinit();
 
         lib_dir_buf.appendSliceAssumeCapacity(installation_path);
@@ -896,7 +896,7 @@ const MsvcLibDir = struct {
                 return error.PathNotFound;
             }
 
-            var msvc_dir = std.ArrayList(u8).fromOwnedSlice(allocator, msvc_include_dir_maybe_with_trailing_slash);
+            var msvc_dir = std.ArrayListInline(u8).fromOwnedSlice(allocator, msvc_include_dir_maybe_with_trailing_slash);
             errdefer msvc_dir.deinit();
 
             // String might contain trailing slash, so trim it here
@@ -929,7 +929,7 @@ const MsvcLibDir = struct {
     }
 
     fn findViaVs7Key(allocator: std.mem.Allocator) error{ OutOfMemory, PathNotFound }![]const u8 {
-        var base_path: std.ArrayList(u8) = base_path: {
+        var base_path: std.ArrayListInline(u8) = base_path: {
             try_env: {
                 var env_map = std.process.getEnvMap(allocator) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
@@ -940,7 +940,7 @@ const MsvcLibDir = struct {
                 if (env_map.get("VS140COMNTOOLS")) |VS140COMNTOOLS| {
                     if (VS140COMNTOOLS.len < "C:\\Common7\\Tools".len) break :try_env;
                     if (!std.fs.path.isAbsolute(VS140COMNTOOLS)) break :try_env;
-                    var list = std.ArrayList(u8).init(allocator);
+                    var list = std.ArrayListInline(u8).init(allocator);
                     errdefer list.deinit();
 
                     try list.appendSlice(VS140COMNTOOLS); // C:\Program Files (x86)\Microsoft Visual Studio 14.0\Common7\Tools
@@ -964,7 +964,7 @@ const MsvcLibDir = struct {
                     break :try_vs7_key;
                 }
 
-                var path = std.ArrayList(u8).fromOwnedSlice(allocator, path_maybe_with_trailing_slash);
+                var path = std.ArrayListInline(u8).fromOwnedSlice(allocator, path_maybe_with_trailing_slash);
                 errdefer path.deinit();
 
                 // String might contain trailing slash, so trim it here

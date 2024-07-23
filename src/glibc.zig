@@ -182,7 +182,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
 
     switch (crt_file) {
         .crti_o => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try add_include_dirs(comp, arena, &args);
             try args.appendSlice(&[_][]const u8{
                 "-D_LIBC_REENTRANT",
@@ -199,14 +199,14 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
             var files = [_]Compilation.CSourceFile{
                 .{
                     .src_path = try start_asm_path(comp, arena, "crti.S"),
-                    .cache_exempt_flags = args.items,
+                    .cache_exempt_flags = args.sliceConst(),
                     .owner = comp.root_mod,
                 },
             };
             return comp.build_crt_file("crti", .Obj, .@"glibc crti.o", prog_node, &files);
         },
         .crtn_o => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try add_include_dirs(comp, arena, &args);
             try args.appendSlice(&[_][]const u8{
                 "-D_LIBC_REENTRANT",
@@ -220,7 +220,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
             var files = [_]Compilation.CSourceFile{
                 .{
                     .src_path = try start_asm_path(comp, arena, "crtn.S"),
-                    .cache_exempt_flags = args.items,
+                    .cache_exempt_flags = args.sliceConst(),
                     .owner = undefined,
                 },
             };
@@ -228,7 +228,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
         },
         .scrt1_o => {
             const start_o: Compilation.CSourceFile = blk: {
-                var args = std.ArrayList([]const u8).init(arena);
+                var args = std.ArrayListInline([]const u8).init(arena);
                 try add_include_dirs(comp, arena, &args);
                 try args.appendSlice(&[_][]const u8{
                     "-D_LIBC_REENTRANT",
@@ -247,12 +247,12 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                 const src_path = if (start_old_init_fini) "start-2.33.S" else "start.S";
                 break :blk .{
                     .src_path = try start_asm_path(comp, arena, src_path),
-                    .cache_exempt_flags = args.items,
+                    .cache_exempt_flags = args.sliceConst(),
                     .owner = undefined,
                 };
             };
             const abi_note_o: Compilation.CSourceFile = blk: {
-                var args = std.ArrayList([]const u8).init(arena);
+                var args = std.ArrayListInline([]const u8).init(arena);
                 try args.appendSlice(&[_][]const u8{
                     "-I",
                     try lib_path(comp, arena, lib_libc_glibc ++ "csu"),
@@ -267,7 +267,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                 });
                 break :blk .{
                     .src_path = try lib_path(comp, arena, lib_libc_glibc ++ "csu" ++ path.sep_str ++ "abi-note.S"),
-                    .cache_exempt_flags = args.items,
+                    .cache_exempt_flags = args.sliceConst(),
                     .owner = undefined,
                 };
             };
@@ -343,7 +343,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
             for (deps) |dep| {
                 if (!dep.include) continue;
 
-                var args = std.ArrayList([]const u8).init(arena);
+                var args = std.ArrayListInline([]const u8).init(arena);
                 try args.appendSlice(&[_][]const u8{
                     "-std=gnu11",
                     "-fgnu89-inline",
@@ -379,7 +379,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                 });
                 files_buf[files_index] = .{
                     .src_path = try lib_path(comp, arena, dep.path),
-                    .cache_exempt_flags = args.items,
+                    .cache_exempt_flags = args.sliceConst(),
                     .owner = undefined,
                 };
                 files_index += 1;
@@ -399,7 +399,7 @@ fn start_asm_path(comp: *Compilation, arena: Allocator, basename: []const u8) ![
 
     const s = path.sep_str;
 
-    var result = std.ArrayList(u8).init(arena);
+    var result = std.ArrayListInline(u8).init(arena);
     try result.appendSlice(comp.zig_lib_directory.path.?);
     try result.appendSlice(s ++ "libc" ++ s ++ "glibc" ++ s ++ "sysdeps" ++ s);
     if (is_sparc) {
@@ -447,10 +447,10 @@ fn start_asm_path(comp: *Compilation, arena: Allocator, basename: []const u8) ![
 
     try result.appendSlice(s);
     try result.appendSlice(basename);
-    return result.items;
+    return result.sliceConst();
 }
 
-fn add_include_dirs(comp: *Compilation, arena: Allocator, args: *std.ArrayList([]const u8)) error{OutOfMemory}!void {
+fn add_include_dirs(comp: *Compilation, arena: Allocator, args: *std.ArrayListInline([]const u8)) error{OutOfMemory}!void {
     const target = comp.getTarget();
     const opt_nptl: ?[]const u8 = if (target.os.tag == .linux) "nptl" else "htl";
 
@@ -523,7 +523,7 @@ fn add_include_dirs(comp: *Compilation, arena: Allocator, args: *std.ArrayList([
 
 fn add_include_dirs_arch(
     arena: Allocator,
-    args: *std.ArrayList([]const u8),
+    args: *std.ArrayListInline([]const u8),
     target: std.Target,
     opt_nptl: ?[]const u8,
     dir: []const u8,
@@ -747,7 +747,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: *std.Progress.Node) !vo
     };
 
     {
-        var map_contents = std.ArrayList(u8).init(arena);
+        var map_contents = std.ArrayListInline(u8).init(arena);
         for (metadata.all_versions[0 .. target_ver_index + 1]) |ver| {
             if (ver.patch == 0) {
                 try map_contents.writer().print("GLIBC_{d}.{d} {{ }};\n", .{ ver.major, ver.minor });
@@ -755,11 +755,11 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: *std.Progress.Node) !vo
                 try map_contents.writer().print("GLIBC_{d}.{d}.{d} {{ }};\n", .{ ver.major, ver.minor, ver.patch });
             }
         }
-        try o_directory.handle.writeFile(.{ .sub_path = all_map_basename, .data = map_contents.items });
+        try o_directory.handle.writeFile(.{ .sub_path = all_map_basename, .data = map_contents.sliceConst() });
         map_contents.deinit(); // The most recent allocation of an arena can be freed :)
     }
 
-    var stubs_asm = std.ArrayList(u8).init(comp.gpa);
+    var stubs_asm = std.ArrayListInline(u8).init(comp.gpa);
     defer stubs_asm.deinit();
 
     for (libs, 0..) |lib, lib_i| {
@@ -1040,7 +1040,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: *std.Progress.Node) !vo
 
         var lib_name_buf: [32]u8 = undefined; // Larger than each of the names "c", "pthread", etc.
         const asm_file_basename = std.fmt.bufPrint(&lib_name_buf, "{s}.s", .{lib.name}) catch unreachable;
-        try o_directory.handle.writeFile(.{ .sub_path = asm_file_basename, .data = stubs_asm.items });
+        try o_directory.handle.writeFile(.{ .sub_path = asm_file_basename, .data = stubs_asm.sliceConst() });
 
         try buildSharedLib(comp, arena, comp.global_cache_directory, o_directory, asm_file_basename, lib, prog_node);
     }

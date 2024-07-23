@@ -38,7 +38,7 @@ test parseOid {
 
 pub const Diagnostics = struct {
     allocator: Allocator,
-    errors: std.ArrayListUnmanaged(Error) = .{},
+    errors: std.ArrayListInlineUnmanaged(Error) = .{},
 
     pub const Error = union(enum) {
         unable_to_create_sym_link: struct {
@@ -53,7 +53,7 @@ pub const Diagnostics = struct {
     };
 
     pub fn deinit(d: *Diagnostics) void {
-        for (d.errors.items) |item| {
+        for (d.errors.sliceConst()) |item| {
             switch (item) {
                 .unable_to_create_sym_link => |info| {
                     d.allocator.free(info.file_name);
@@ -263,7 +263,7 @@ const Odb = struct {
     fn readObject(odb: *Odb) !Object {
         var base_offset = try odb.pack_file.getPos();
         var base_header: EntryHeader = undefined;
-        var delta_offsets = std.ArrayListUnmanaged(u64){};
+        var delta_offsets = std.ArrayListInlineUnmanaged(u64){};
         defer delta_offsets.deinit(odb.allocator);
         const base_object = while (true) {
             if (odb.cache.get(base_offset)) |base_object| break base_object;
@@ -294,7 +294,7 @@ const Odb = struct {
             odb.allocator,
             odb.pack_file,
             base_object,
-            delta_offsets.items,
+            delta_offsets.sliceConst(),
             &odb.cache,
         );
 
@@ -660,7 +660,7 @@ pub const Session = struct {
         upload_pack_uri.query = null;
         upload_pack_uri.fragment = null;
 
-        var body = std.ArrayListUnmanaged(u8){};
+        var body = std.ArrayListInlineUnmanaged(u8){};
         defer body.deinit(allocator);
         const body_writer = body.writer(allocator);
         try Packet.write(.{ .data = "command=ls-refs\n" }, body_writer);
@@ -690,9 +690,9 @@ pub const Session = struct {
             },
         });
         errdefer request.deinit();
-        request.transfer_encoding = .{ .content_length = body.items.len };
+        request.transfer_encoding = .{ .content_length = body.info.len };
         try request.send();
-        try request.writeAll(body.items);
+        try request.writeAll(body.sliceConst());
         try request.finish();
 
         try request.wait();
@@ -767,7 +767,7 @@ pub const Session = struct {
         upload_pack_uri.query = null;
         upload_pack_uri.fragment = null;
 
-        var body = std.ArrayListUnmanaged(u8){};
+        var body = std.ArrayListInlineUnmanaged(u8){};
         defer body.deinit(allocator);
         const body_writer = body.writer(allocator);
         try Packet.write(.{ .data = "command=fetch\n" }, body_writer);
@@ -799,9 +799,9 @@ pub const Session = struct {
             },
         });
         errdefer request.deinit();
-        request.transfer_encoding = .{ .content_length = body.items.len };
+        request.transfer_encoding = .{ .content_length = body.info.len };
         try request.send();
-        try request.writeAll(body.items);
+        try request.writeAll(body.sliceConst());
         try request.finish();
 
         try request.wait();
@@ -1046,36 +1046,36 @@ pub fn indexPack(allocator: Allocator, pack: std.fs.File, index_writer: anytype)
 
     var index_entries = std.AutoHashMapUnmanaged(Oid, IndexEntry){};
     defer index_entries.deinit(allocator);
-    var pending_deltas = std.ArrayListUnmanaged(IndexEntry){};
+    var pending_deltas = std.ArrayListInlineUnmanaged(IndexEntry){};
     defer pending_deltas.deinit(allocator);
 
     const pack_checksum = try indexPackFirstPass(allocator, pack, &index_entries, &pending_deltas);
 
     var cache: ObjectCache = .{};
     defer cache.deinit(allocator);
-    var remaining_deltas = pending_deltas.items.len;
+    var remaining_deltas = pending_deltas.info.len;
     while (remaining_deltas > 0) {
         var i: usize = remaining_deltas;
         while (i > 0) {
             i -= 1;
-            const delta = pending_deltas.items[i];
+            const delta = pending_deltas.sliceConst()[i];
             if (try indexPackHashDelta(allocator, pack, delta, index_entries, &cache)) |oid| {
                 try index_entries.put(allocator, oid, delta);
                 _ = pending_deltas.swapRemove(i);
             }
         }
-        if (pending_deltas.items.len == remaining_deltas) return error.IncompletePack;
-        remaining_deltas = pending_deltas.items.len;
+        if (pending_deltas.info.len == remaining_deltas) return error.IncompletePack;
+        remaining_deltas = pending_deltas.info.len;
     }
 
-    var oids = std.ArrayListUnmanaged(Oid){};
+    var oids = std.ArrayListInlineUnmanaged(Oid){};
     defer oids.deinit(allocator);
     try oids.ensureTotalCapacityPrecise(allocator, index_entries.count());
     var index_entries_iter = index_entries.iterator();
     while (index_entries_iter.next()) |entry| {
         oids.appendAssumeCapacity(entry.key_ptr.*);
     }
-    mem.sortUnstable(Oid, oids.items, {}, struct {
+    mem.sortUnstable(Oid, oids.slice(), {}, struct {
         fn lessThan(_: void, o1: Oid, o2: Oid) bool {
             return mem.lessThan(u8, &o1, &o2);
         }
@@ -1084,7 +1084,7 @@ pub fn indexPack(allocator: Allocator, pack: std.fs.File, index_writer: anytype)
     var fan_out_table: [256]u32 = undefined;
     var count: u32 = 0;
     var fan_out_index: u8 = 0;
-    for (oids.items) |oid| {
+    for (oids.sliceConst()) |oid| {
         if (oid[0] > fan_out_index) {
             @memset(fan_out_table[fan_out_index..oid[0]], count);
             fan_out_index = oid[0];
@@ -1101,27 +1101,27 @@ pub fn indexPack(allocator: Allocator, pack: std.fs.File, index_writer: anytype)
         try writer.writeInt(u32, fan_out_entry, .big);
     }
 
-    for (oids.items) |oid| {
+    for (oids.sliceConst()) |oid| {
         try writer.writeAll(&oid);
     }
 
-    for (oids.items) |oid| {
+    for (oids.sliceConst()) |oid| {
         try writer.writeInt(u32, index_entries.get(oid).?.crc32, .big);
     }
 
-    var big_offsets = std.ArrayListUnmanaged(u64){};
+    var big_offsets = std.ArrayListInlineUnmanaged(u64){};
     defer big_offsets.deinit(allocator);
-    for (oids.items) |oid| {
+    for (oids.sliceConst()) |oid| {
         const offset = index_entries.get(oid).?.offset;
         if (offset <= std.math.maxInt(u31)) {
             try writer.writeInt(u32, @intCast(offset), .big);
         } else {
-            const index = big_offsets.items.len;
+            const index = big_offsets.info.len;
             try big_offsets.append(allocator, offset);
             try writer.writeInt(u32, @as(u32, @intCast(index)) | (1 << 31), .big);
         }
     }
-    for (big_offsets.items) |offset| {
+    for (big_offsets.sliceConst()) |offset| {
         try writer.writeInt(u64, offset, .big);
     }
 
@@ -1138,7 +1138,7 @@ fn indexPackFirstPass(
     allocator: Allocator,
     pack: std.fs.File,
     index_entries: *std.AutoHashMapUnmanaged(Oid, IndexEntry),
-    pending_deltas: *std.ArrayListUnmanaged(IndexEntry),
+    pending_deltas: *std.ArrayListInlineUnmanaged(IndexEntry),
 ) ![Sha1.digest_length]u8 {
     var pack_buffered_reader = std.io.bufferedReader(pack.reader());
     var pack_counting_reader = std.io.countingReader(pack_buffered_reader.reader());
@@ -1213,7 +1213,7 @@ fn indexPackHashDelta(
     // Figure out the chain of deltas to resolve
     var base_offset = delta.offset;
     var base_header: EntryHeader = undefined;
-    var delta_offsets = std.ArrayListUnmanaged(u64){};
+    var delta_offsets = std.ArrayListInlineUnmanaged(u64){};
     defer delta_offsets.deinit(allocator);
     const base_object = while (true) {
         if (cache.get(base_offset)) |base_object| break base_object;
@@ -1239,7 +1239,7 @@ fn indexPackHashDelta(
         }
     };
 
-    const base_data = try resolveDeltaChain(allocator, pack, base_object, delta_offsets.items, cache);
+    const base_data = try resolveDeltaChain(allocator, pack, base_object, delta_offsets.sliceConst(), cache);
 
     var entry_hasher = Sha1.init(.{});
     var entry_hashed_writer = hashedWriter(std.io.null_writer, &entry_hasher);
@@ -1428,7 +1428,7 @@ test "packfile indexing and checkout" {
     var diagnostics: Diagnostics = .{ .allocator = testing.allocator };
     defer diagnostics.deinit();
     try repository.checkout(worktree.dir, commit_id, &diagnostics);
-    try testing.expect(diagnostics.errors.items.len == 0);
+    try testing.expect(diagnostics.errors.info.len == 0);
 
     const expected_files: []const []const u8 = &.{
         "dir/file",
@@ -1447,9 +1447,9 @@ test "packfile indexing and checkout" {
         "file8",
         "file9",
     };
-    var actual_files: std.ArrayListUnmanaged([]u8) = .{};
+    var actual_files: std.ArrayListInlineUnmanaged([]u8) = .{};
     defer actual_files.deinit(testing.allocator);
-    defer for (actual_files.items) |file| testing.allocator.free(file);
+    defer for (actual_files.slice()) |file| testing.allocator.free(file);
     var walker = try worktree.dir.walk(testing.allocator);
     defer walker.deinit();
     while (try walker.next()) |entry| {
@@ -1459,12 +1459,12 @@ test "packfile indexing and checkout" {
         mem.replaceScalar(u8, path, std.fs.path.sep, '/');
         try actual_files.append(testing.allocator, path);
     }
-    mem.sortUnstable([]u8, actual_files.items, {}, struct {
+    mem.sortUnstable([]u8, actual_files.slice(), {}, struct {
         fn lessThan(_: void, a: []u8, b: []u8) bool {
             return mem.lessThan(u8, a, b);
         }
     }.lessThan);
-    try testing.expectEqualDeep(expected_files, actual_files.items);
+    try testing.expectEqualDeep(expected_files, actual_files.sliceConst());
 
     const expected_file_contents =
         \\revision 1
@@ -1522,7 +1522,7 @@ pub fn main() !void {
     defer diagnostics.deinit();
     try repository.checkout(worktree, commit, &diagnostics);
 
-    for (diagnostics.errors.items) |err| {
+    for (diagnostics.errors.sliceConst()) |err| {
         std.debug.print("Diagnostic: {}\n", .{err});
     }
 }

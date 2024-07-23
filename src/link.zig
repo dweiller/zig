@@ -779,7 +779,7 @@ pub const File = struct {
 
         const win32_resource_table_len = if (build_options.only_core_functionality) 0 else comp.win32_resource_table.count();
         const num_object_files = objects.len + comp.c_object_table.count() + win32_resource_table_len + 2;
-        var object_files = try std.ArrayList([*:0]const u8).initCapacity(gpa, num_object_files);
+        var object_files = try std.ArrayListInline([*:0]const u8).initCapacity(gpa, num_object_files);
         defer object_files.deinit();
 
         for (objects) |obj| {

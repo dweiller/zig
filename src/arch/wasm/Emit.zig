@@ -18,7 +18,7 @@ bin_file: *link.File.Wasm,
 /// must be freed manually.
 error_msg: ?*Module.ErrorMsg = null,
 /// The binary representation that will be emit by this module.
-code: *std.ArrayList(u8),
+code: *std.ArrayListInline(u8),
 /// List of allocated locals.
 locals: []const u8,
 /// The declaration that code is being generated for.

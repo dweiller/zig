@@ -592,10 +592,10 @@ pub const Function = struct {
 pub const Object = struct {
     dg: DeclGen,
     /// This is a borrowed reference from `link.C`.
-    code: std.ArrayList(u8),
+    code: std.ArrayListInline(u8),
     /// Goes before code. Initialized and deinitialized in `genFunc`.
-    code_header: std.ArrayList(u8) = undefined,
-    indent_writer: IndentWriter(std.ArrayList(u8).Writer),
+    code_header: std.ArrayListInline(u8) = undefined,
+    indent_writer: IndentWriter(std.ArrayListInline(u8).Writer),
 
     fn writer(o: *Object) IndentWriter(std.ArrayList(u8).Writer).Writer {
         return o.indent_writer.writer();
@@ -614,7 +614,7 @@ pub const DeclGen = struct {
     pass: Pass,
     is_naked_fn: bool,
     /// This is a borrowed reference from `link.C`.
-    fwd_decl: std.ArrayList(u8),
+    fwd_decl: std.ArrayListInline(u8),
     error_msg: ?*Zcu.ErrorMsg,
     ctype_pool: CType.Pool,
     scratch: std.ArrayListUnmanaged(u32),
@@ -1841,7 +1841,7 @@ pub const DeclGen = struct {
                     .export_index => |export_index| mangled: {
                         const maybe_exports = zcu.decl_exports.get(fn_decl_index);
                         const external_name = (if (maybe_exports) |exports|
-                            exports.items[export_index].opts.name
+                            exports.sliceConst()[export_index].opts.name
                         else if (fn_decl.isExtern(zcu))
                             fn_decl.name
                         else
@@ -1853,7 +1853,7 @@ pub const DeclGen = struct {
                                 fmtIdent(external_name),
                                 fmtStringLiteral(external_name, null),
                                 fmtStringLiteral(
-                                    maybe_exports.?.items[0].opts.name.toSlice(ip),
+                                    maybe_exports.?.sliceConst()[0].opts.name.toSlice(ip),
                                     null,
                                 ),
                             });
@@ -1864,7 +1864,7 @@ pub const DeclGen = struct {
                         } else if (is_export) {
                             try w.print(" zig_export({s}, {s})", .{
                                 fmtStringLiteral(
-                                    maybe_exports.?.items[0].opts.name.toSlice(ip),
+                                    maybe_exports.?.sliceConst()[0].opts.name.toSlice(ip),
                                     null,
                                 ),
                                 fmtStringLiteral(external_name, null),
@@ -2205,7 +2205,7 @@ pub const DeclGen = struct {
         try fwd.writeAll(if (is_global) "zig_extern " else "static ");
         const maybe_exports = zcu.decl_exports.get(decl_index);
         const export_weak_linkage = if (maybe_exports) |exports|
-            exports.items[0].opts.linkage == .weak
+            exports.sliceConst()[0].opts.linkage == .weak
         else
             false;
         if (variable.is_weak_linkage or export_weak_linkage) try fwd.writeAll("zig_weak_linkage ");
@@ -2220,7 +2220,7 @@ pub const DeclGen = struct {
         );
         mangled: {
             const external_name = (if (maybe_exports) |exports|
-                exports.items[0].opts.name
+                exports.sliceConst()[0].opts.name
             else if (variable.is_extern)
                 decl.name
             else
@@ -2243,7 +2243,7 @@ pub const DeclGen = struct {
 
         if (zcu.decl_exports.get(decl_index)) |exports| {
             try writer.print("{ }", .{
-                fmtIdent(exports.items[export_index].opts.name.toSlice(ip)),
+                fmtIdent(exports.sliceConst()[export_index].opts.name.toSlice(ip)),
             });
         } else if (decl.getExternDecl(zcu).unwrap()) |extern_decl_index| {
             try writer.print("{ }", .{
@@ -2776,10 +2776,10 @@ fn genExports(o: *Object) !void {
     const fwd = o.dg.fwdDeclWriter();
 
     const exports = zcu.decl_exports.get(decl_index) orelse return;
-    if (exports.items.len < 2) return;
+    if (exports.info.len < 2) return;
 
     const is_variable_const = switch (ip.indexToKey(decl.val.toIntern())) {
-        .func => return for (exports.items[1..], 1..) |@"export", i| {
+        .func => return for (exports.sliceConst()[1..], 1..) |@"export", i| {
             try fwd.writeAll("zig_extern ");
             if (@"export".opts.linkage == .weak) try fwd.writeAll("zig_weak_linkage_fn ");
             try o.dg.renderFunctionSignature(
@@ -2797,7 +2797,7 @@ fn genExports(o: *Object) !void {
         .variable => |variable| variable.is_const,
         else => true,
     };
-    for (exports.items[1..]) |@"export"| {
+    for (exports.sliceConst()[1..]) |@"export"| {
         try fwd.writeAll("zig_extern ");
         if (@"export".opts.linkage == .weak) try fwd.writeAll("zig_weak_linkage ");
         const export_name = @"export".opts.name.toSlice(ip);
@@ -2813,11 +2813,11 @@ fn genExports(o: *Object) !void {
             try fwd.print(" zig_mangled_export({ }, {s}, {s})", .{
                 fmtIdent(export_name),
                 fmtStringLiteral(export_name, null),
-                fmtStringLiteral(exports.items[0].opts.name.toSlice(ip), null),
+                fmtStringLiteral(exports.sliceConst()[0].opts.name.toSlice(ip), null),
             });
         } else {
             try fwd.print(" zig_export({s}, {s})", .{
-                fmtStringLiteral(exports.items[0].opts.name.toSlice(ip), null),
+                fmtStringLiteral(exports.sliceConst()[0].opts.name.toSlice(ip), null),
                 fmtStringLiteral(export_name, null),
             });
         }
@@ -2919,7 +2919,7 @@ pub fn genFunc(f: *Function) !void {
     const decl_index = o.dg.pass.decl;
     const decl = zcu.declPtr(decl_index);
 
-    o.code_header = std.ArrayList(u8).init(gpa);
+    o.code_header = std.ArrayListInline(u8).init(gpa);
     defer o.code_header.deinit();
 
     const is_global = o.dg.declIsGlobal(decl.val);
@@ -2927,7 +2927,7 @@ pub fn genFunc(f: *Function) !void {
     try fwd_decl_writer.writeAll(if (is_global) "zig_extern " else "static ");
 
     if (zcu.decl_exports.get(decl_index)) |exports|
-        if (exports.items[0].opts.linkage == .weak) try fwd_decl_writer.writeAll("zig_weak_linkage_fn ");
+        if (exports.sliceConst()[0].opts.linkage == .weak) try fwd_decl_writer.writeAll("zig_weak_linkage_fn ");
     try o.dg.renderFunctionSignature(fwd_decl_writer, decl_index, .forward, .{ .export_index = 0 });
     try fwd_decl_writer.writeAll(";\n");
     try genExports(o);
@@ -2941,10 +2941,10 @@ pub fn genFunc(f: *Function) !void {
 
     // In case we need to use the header, populate it with a copy of the function
     // signature here. We anticipate a brace, newline, and space.
-    try o.code_header.ensureUnusedCapacity(o.code.items.len + 3);
-    o.code_header.appendSliceAssumeCapacity(o.code.items);
+    try o.code_header.ensureUnusedCapacity(o.code.info.len + 3);
+    o.code_header.appendSliceAssumeCapacity(o.code.sliceConst());
     o.code_header.appendSliceAssumeCapacity("{\n ");
-    const empty_header_len = o.code_header.items.len;
+    const empty_header_len = o.code_header.info.len;
 
     f.free_locals_map.clearRetainingCapacity();
 
@@ -2991,8 +2991,8 @@ pub fn genFunc(f: *Function) !void {
 
     // If we have a header to insert, append the body to the header
     // and then return the result, freeing the body.
-    if (o.code_header.items.len > empty_header_len) {
-        try o.code_header.appendSlice(o.code.items[empty_header_len..]);
+    if (o.code_header.info.len > empty_header_len) {
+        try o.code_header.appendSlice(o.code.sliceConst()[empty_header_len..]);
         mem.swap(std.ArrayList(u8), &o.code, &o.code_header);
     }
 }
@@ -3057,7 +3057,7 @@ pub fn genDeclValue(
     switch (o.dg.pass) {
         .decl => |decl_index| {
             if (zcu.decl_exports.get(decl_index)) |exports| {
-                const export_name = exports.items[0].opts.name.toSlice(&zcu.intern_pool);
+                const export_name = exports.sliceConst()[0].opts.name.toSlice(&zcu.intern_pool);
                 if (isMangledIdent(export_name, true)) {
                     try fwd_decl_writer.print(" zig_mangled_final({ }, {s})", .{
                         fmtIdent(export_name), fmtStringLiteral(export_name, null),
@@ -7516,9 +7516,9 @@ fn toAtomicRmwSuffix(order: std.builtin.AtomicRmwOp) []const u8 {
     };
 }
 
-const ArrayListWriter = ErrorOnlyGenericWriter(std.ArrayList(u8).Writer.Error);
+const ArrayListWriter = ErrorOnlyGenericWriter(std.ArrayListInline(u8).Writer.Error);
 
-fn arrayListWriter(list: *std.ArrayList(u8)) ArrayListWriter {
+fn arrayListWriter(list: *std.ArrayListInline(u8)) ArrayListWriter {
     return .{ .context = .{
         .context = list,
         .writeFn = struct {

@@ -30,7 +30,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
 
     switch (crt_file) {
         .crti_o => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try addCcArgs(comp, arena, &args, false);
             try args.appendSlice(&[_][]const u8{
                 "-Qunused-arguments",
@@ -38,14 +38,14 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
             var files = [_]Compilation.CSourceFile{
                 .{
                     .src_path = try start_asm_path(comp, arena, "crti.s"),
-                    .extra_flags = args.items,
+                    .extra_flags = args.sliceConst(),
                     .owner = undefined,
                 },
             };
             return comp.build_crt_file("crti", .Obj, .@"musl crti.o", prog_node, &files);
         },
         .crtn_o => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try addCcArgs(comp, arena, &args, false);
             try args.appendSlice(&[_][]const u8{
                 "-Qunused-arguments",
@@ -53,14 +53,14 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
             var files = [_]Compilation.CSourceFile{
                 .{
                     .src_path = try start_asm_path(comp, arena, "crtn.s"),
-                    .extra_flags = args.items,
+                    .extra_flags = args.sliceConst(),
                     .owner = undefined,
                 },
             };
             return comp.build_crt_file("crtn", .Obj, .@"musl crtn.o", prog_node, &files);
         },
         .crt1_o => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try addCcArgs(comp, arena, &args, false);
             try args.appendSlice(&[_][]const u8{
                 "-fno-stack-protector",
@@ -71,14 +71,14 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                     .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                         "libc", "musl", "crt", "crt1.c",
                     }),
-                    .extra_flags = args.items,
+                    .extra_flags = args.sliceConst(),
                     .owner = undefined,
                 },
             };
             return comp.build_crt_file("crt1", .Obj, .@"musl crt1.o", prog_node, &files);
         },
         .rcrt1_o => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try addCcArgs(comp, arena, &args, false);
             try args.appendSlice(&[_][]const u8{
                 "-fPIC",
@@ -90,14 +90,14 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                     .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                         "libc", "musl", "crt", "rcrt1.c",
                     }),
-                    .extra_flags = args.items,
+                    .extra_flags = args.sliceConst(),
                     .owner = undefined,
                 },
             };
             return comp.build_crt_file("rcrt1", .Obj, .@"musl rcrt1.o", prog_node, &files);
         },
         .scrt1_o => {
-            var args = std.ArrayList([]const u8).init(arena);
+            var args = std.ArrayListInline([]const u8).init(arena);
             try addCcArgs(comp, arena, &args, false);
             try args.appendSlice(&[_][]const u8{
                 "-fPIC",
@@ -109,7 +109,7 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                     .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{
                         "libc", "musl", "crt", "Scrt1.c",
                     }),
-                    .extra_flags = args.items,
+                    .extra_flags = args.sliceConst(),
                     .owner = undefined,
                 },
             };
@@ -138,10 +138,10 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                 }
             }
 
-            var c_source_files = std.ArrayList(Compilation.CSourceFile).init(comp.gpa);
+            var c_source_files = std.ArrayListInline(Compilation.CSourceFile).init(comp.gpa);
             defer c_source_files.deinit();
 
-            var override_path = std.ArrayList(u8).init(comp.gpa);
+            var override_path = std.ArrayListInline(u8).init(comp.gpa);
             defer override_path.deinit();
 
             const s = path.sep_str;
@@ -169,25 +169,25 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                     try override_path.writer().print("{s}" ++ s ++ "{s}" ++ s ++ "{s}.s", .{
                         dirname, arch_name, noextbasename,
                     });
-                    if (source_table.contains(override_path.items))
+                    if (source_table.contains(override_path.sliceConst()))
                         continue;
 
                     override_path.shrinkRetainingCapacity(0);
                     try override_path.writer().print("{s}" ++ s ++ "{s}" ++ s ++ "{s}.S", .{
                         dirname, arch_name, noextbasename,
                     });
-                    if (source_table.contains(override_path.items))
+                    if (source_table.contains(override_path.sliceConst()))
                         continue;
 
                     override_path.shrinkRetainingCapacity(0);
                     try override_path.writer().print("{s}" ++ s ++ "{s}" ++ s ++ "{s}.c", .{
                         dirname, arch_name, noextbasename,
                     });
-                    if (source_table.contains(override_path.items))
+                    if (source_table.contains(override_path.sliceConst()))
                         continue;
                 }
 
-                var args = std.ArrayList([]const u8).init(arena);
+                var args = std.ArrayListInline([]const u8).init(arena);
                 try addCcArgs(comp, arena, &args, ext == .o3);
                 try args.appendSlice(&[_][]const u8{
                     "-Qunused-arguments",
@@ -196,11 +196,11 @@ pub fn buildCRTFile(comp: *Compilation, crt_file: CRTFile, prog_node: *std.Progr
                 const c_source_file = try c_source_files.addOne();
                 c_source_file.* = .{
                     .src_path = try comp.zig_lib_directory.join(arena, &[_][]const u8{ "libc", src_file }),
-                    .extra_flags = args.items,
+                    .extra_flags = args.sliceConst(),
                     .owner = undefined,
                 };
             }
-            return comp.build_crt_file("c", .Lib, .@"musl libc.a", prog_node, c_source_files.items);
+            return comp.build_crt_file("c", .Lib, .@"musl libc.a", prog_node, c_source_files.sliceConst());
         },
         .libc_so => {
             const optimize_mode = comp.compilerRtOptMode();
@@ -376,7 +376,7 @@ fn addSrcFile(arena: Allocator, source_table: *std.StringArrayHashMap(Ext), file
 fn addCcArgs(
     comp: *Compilation,
     arena: Allocator,
-    args: *std.ArrayList([]const u8),
+    args: *std.ArrayListInline([]const u8),
     want_O3: bool,
 ) error{OutOfMemory}!void {
     const target = comp.getTarget();

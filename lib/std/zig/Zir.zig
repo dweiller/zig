@@ -3111,7 +3111,7 @@ pub const Inst = struct {
         /// e.g. `const Foo = struct {...};`.
         parent,
         /// Use the name of the currently executing comptime function call,
-        /// with the current parameters. e.g. `ArrayList(i32)`.
+        /// with the current parameters. e.g. `ArrayListInline(i32)`.
         func,
         /// Create an anonymous name for this declaration.
         /// Like this: "ParentDeclName_struct_69"
@@ -3665,8 +3665,8 @@ pub fn declIterator(zir: Zir, decl_inst: Zir.Inst.Index) DeclIterator {
 }
 
 /// The iterator would have to allocate memory anyway to iterate. So here we populate
-/// an ArrayList as the result.
-pub fn findDecls(zir: Zir, list: *std.ArrayList(Inst.Index), decl_inst: Zir.Inst.Index) !void {
+/// an ArrayListInline as the result.
+pub fn findDecls(zir: Zir, list: *std.ArrayListInline(Inst.Index), decl_inst: Zir.Inst.Index) !void {
     list.clearRetainingCapacity();
     const declaration, const extra_end = zir.getDeclaration(decl_inst);
     const bodies = declaration.getBodies(extra_end, zir);
@@ -3679,7 +3679,7 @@ pub fn findDecls(zir: Zir, list: *std.ArrayList(Inst.Index), decl_inst: Zir.Inst
 
 fn findDeclsInner(
     zir: Zir,
-    list: *std.ArrayList(Inst.Index),
+    list: *std.ArrayListInline(Inst.Index),
     inst: Inst.Index,
 ) Allocator.Error!void {
     const tags = zir.instructions.items(.tag);
@@ -3818,7 +3818,7 @@ fn findDeclsInner(
 
 fn findDeclsSwitch(
     zir: Zir,
-    list: *std.ArrayList(Inst.Index),
+    list: *std.ArrayListInline(Inst.Index),
     inst: Inst.Index,
 ) Allocator.Error!void {
     const inst_data = zir.instructions.items(.data)[@intFromEnum(inst)].pl_node;
@@ -3882,7 +3882,7 @@ fn findDeclsSwitch(
 
 fn findDeclsBody(
     zir: Zir,
-    list: *std.ArrayList(Inst.Index),
+    list: *std.ArrayListInline(Inst.Index),
     body: []const Inst.Index,
 ) Allocator.Error!void {
     for (body) |member| {

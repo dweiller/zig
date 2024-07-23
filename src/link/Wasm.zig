@@ -2562,23 +2562,23 @@ pub fn flushModule(wasm: *Wasm, arena: Allocator, prog_node: *std.Progress.Node)
     if (wasm.zig_object_index != .null) {
         try wasm.resolveSymbolsInObject(wasm.zig_object_index);
     }
-    if (comp.link_errors.items.len > 0) return error.FlushFailure;
+    if (comp.link_errors.info.len > 0) return error.FlushFailure;
     for (wasm.objects.items) |object_index| {
         try wasm.resolveSymbolsInObject(object_index);
     }
-    if (comp.link_errors.items.len > 0) return error.FlushFailure;
+    if (comp.link_errors.info.len > 0) return error.FlushFailure;
 
     var emit_features_count: u32 = 0;
     var enabled_features: [@typeInfo(types.Feature.Tag).Enum.fields.len]bool = undefined;
     try wasm.validateFeatures(&enabled_features, &emit_features_count);
     try wasm.resolveSymbolsInArchives();
-    if (comp.link_errors.items.len > 0) return error.FlushFailure;
+    if (comp.link_errors.info.len > 0) return error.FlushFailure;
     try wasm.resolveLazySymbols();
     try wasm.checkUndefinedSymbols();
     try wasm.checkExportNames();
 
     try wasm.setupInitFunctions();
-    if (comp.link_errors.items.len > 0) return error.FlushFailure;
+    if (comp.link_errors.info.len > 0) return error.FlushFailure;
     try wasm.setupStart();
 
     try wasm.markReferences();
@@ -2587,7 +2587,7 @@ pub fn flushModule(wasm: *Wasm, arena: Allocator, prog_node: *std.Progress.Node)
     try wasm.mergeTypes();
     try wasm.allocateAtoms();
     try wasm.setupMemory();
-    if (comp.link_errors.items.len > 0) return error.FlushFailure;
+    if (comp.link_errors.info.len > 0) return error.FlushFailure;
     wasm.allocateVirtualAddresses();
     wasm.mapFunctionTable();
     try wasm.initializeCallCtorsFunction();
@@ -2597,7 +2597,7 @@ pub fn flushModule(wasm: *Wasm, arena: Allocator, prog_node: *std.Progress.Node)
     try wasm.setupStartSection();
     try wasm.setupExports();
     try wasm.writeToFile(enabled_features, emit_features_count, arena);
-    if (comp.link_errors.items.len > 0) return error.FlushFailure;
+    if (comp.link_errors.info.len > 0) return error.FlushFailure;
 }
 
 /// Writes the WebAssembly in-memory module to the file
@@ -4100,7 +4100,7 @@ const ErrorWithNotes = struct {
     ) error{OutOfMemory}!void {
         const comp = wasm_file.base.comp;
         const gpa = comp.gpa;
-        const err_msg = &comp.link_errors.items[err.index];
+        const err_msg = &comp.link_errors.slice()[err.index];
         err_msg.msg = try std.fmt.allocPrint(gpa, format, args);
     }
 
@@ -4112,7 +4112,7 @@ const ErrorWithNotes = struct {
     ) error{OutOfMemory}!void {
         const comp = wasm_file.base.comp;
         const gpa = comp.gpa;
-        const err_msg = &comp.link_errors.items[err.index];
+        const err_msg = &comp.link_errors.sliceConst()[err.index];
         err_msg.notes[err.note_slot] = .{ .msg = try std.fmt.allocPrint(gpa, format, args) };
         err.note_slot += 1;
     }
@@ -4133,7 +4133,7 @@ pub fn addErrorWithoutNotes(wasm: *const Wasm, comptime fmt: []const u8, args: a
 fn addErrorWithNotesAssumeCapacity(wasm: *const Wasm, note_count: usize) error{OutOfMemory}!ErrorWithNotes {
     const comp = wasm.base.comp;
     const gpa = comp.gpa;
-    const index = comp.link_errors.items.len;
+    const index = comp.link_errors.info.len;
     const err = comp.link_errors.addOneAssumeCapacity();
     err.* = .{ .msg = undefined, .notes = try gpa.alloc(link.File.ErrorMsg, note_count) };
     return .{ .index = index };

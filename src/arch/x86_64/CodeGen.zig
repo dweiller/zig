@@ -80,7 +80,7 @@ eflags_inst: ?Air.Inst.Index = null,
 /// MIR Instructions
 mir_instructions: std.MultiArrayList(Mir.Inst) = .{},
 /// MIR extra data
-mir_extra: std.ArrayListUnmanaged(u32) = .{},
+mir_extra: std.ArrayListInlineUnmanaged(u32) = .{},
 
 /// Byte offset within the source file of the ending curly.
 end_di_line: u32,
@@ -89,7 +89,7 @@ end_di_column: u32,
 /// The value is an offset into the `Function` `code` from the beginning.
 /// To perform the reloc, write 32-bit signed little-endian integer
 /// which is a relative jump, based on the address following the reloc.
-exitlude_jump_relocs: std.ArrayListUnmanaged(Mir.Inst.Index) = .{},
+exitlude_jump_relocs: std.ArrayListInlineUnmanaged(Mir.Inst.Index) = .{},
 
 const_tracking: ConstTrackingMap = .{},
 inst_tracking: InstTrackingMap = .{},
@@ -781,7 +781,7 @@ const StackAllocation = struct {
 };
 
 const BlockData = struct {
-    relocs: std.ArrayListUnmanaged(Mir.Inst.Index) = .{},
+    relocs: std.ArrayListInlineUnmanaged(Mir.Inst.Index) = .{},
     state: State,
 
     fn deinit(self: *BlockData, gpa: Allocator) void {
@@ -798,7 +798,7 @@ pub fn generate(
     func_index: InternPool.Index,
     air: Air,
     liveness: Liveness,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
 ) CodeGenError!Result {
     const comp = bin_file.comp;
@@ -972,7 +972,7 @@ pub fn generateLazy(
     bin_file: *link.File,
     src_loc: Module.SrcLoc,
     lazy_sym: link.File.LazySymbol,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
 ) CodeGenError!Result {
     const comp = bin_file.comp;
@@ -2608,7 +2608,7 @@ fn restoreState(self: *Self, state: State, deaths: []const Air.Inst.Index, compt
         if (opts.update_tracking)
     {} else std.heap.stackFallback(@sizeOf(ExpectedContents), self.gpa);
 
-    var reg_locks = if (opts.update_tracking) {} else try std.ArrayList(RegisterLock).initCapacity(
+    var reg_locks = if (opts.update_tracking) {} else try std.ArrayListInline(RegisterLock).initCapacity(
         stack.get(),
         @typeInfo(ExpectedContents).Array.len,
     );
@@ -12055,7 +12055,7 @@ fn genCall(self: *Self, info: union(enum) {
     const frame_indices = try allocator.alloc(FrameIndex, args.len);
     defer allocator.free(frame_indices);
 
-    var reg_locks = std.ArrayList(?RegisterLock).init(allocator);
+    var reg_locks = std.ArrayListInline(?RegisterLock).init(allocator);
     defer reg_locks.deinit();
     try reg_locks.ensureTotalCapacity(16);
     defer for (reg_locks.items) |reg_lock| if (reg_lock) |lock| self.register_manager.unlockReg(lock);
@@ -13611,7 +13611,7 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
     extra_i += inputs.len;
 
     var result: MCValue = .none;
-    var args = std.ArrayList(MCValue).init(self.gpa);
+    var args = std.ArrayListInline(MCValue).init(self.gpa);
     try args.ensureTotalCapacity(outputs.len + inputs.len);
     defer {
         for (args.items) |arg| if (arg.getReg()) |reg| self.register_manager.unlockReg(.{
@@ -13820,7 +13820,7 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
 
     const Label = struct {
         target: Mir.Inst.Index = undefined,
-        pending_relocs: std.ArrayListUnmanaged(Mir.Inst.Index) = .{},
+        pending_relocs: std.ArrayListInlineUnmanaged(Mir.Inst.Index) = .{},
 
         const Kind = enum { definition, reference };
 

@@ -114,7 +114,7 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, mode: Mode) Allocator.Error!A
 /// `gpa` is used for allocating the resulting formatted source code.
 /// Caller owns the returned slice of bytes, allocated with `gpa`.
 pub fn render(tree: Ast, gpa: Allocator) RenderError![]u8 {
-    var buffer = std.ArrayList(u8).init(gpa);
+    var buffer = std.ArrayListInline(u8).init(gpa);
     defer buffer.deinit();
 
     try tree.renderToArrayList(&buffer, .{});
@@ -123,7 +123,7 @@ pub fn render(tree: Ast, gpa: Allocator) RenderError![]u8 {
 
 pub const Fixups = private_render.Fixups;
 
-pub fn renderToArrayList(tree: Ast, buffer: *std.ArrayList(u8), fixups: Fixups) RenderError!void {
+pub fn renderToArrayList(tree: Ast, buffer: *std.ArrayListInline(u8), fixups: Fixups) RenderError!void {
     return @import("./render.zig").renderTree(buffer, tree, fixups);
 }
 

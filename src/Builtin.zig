@@ -18,12 +18,12 @@ omit_frame_pointer: bool,
 wasi_exec_model: std.builtin.WasiExecModel,
 
 pub fn generate(opts: @This(), allocator: Allocator) Allocator.Error![:0]u8 {
-    var buffer = std.ArrayList(u8).init(allocator);
+    var buffer = std.ArrayListInline(u8).init(allocator);
     try append(opts, &buffer);
     return buffer.toOwnedSliceSentinel(0);
 }
 
-pub fn append(opts: @This(), buffer: *std.ArrayList(u8)) Allocator.Error!void {
+pub fn append(opts: @This(), buffer: *std.ArrayListInline(u8)) Allocator.Error!void {
     const target = opts.target;
     const generic_arch_name = target.cpu.arch.genericName();
     const zig_backend = opts.zig_backend;

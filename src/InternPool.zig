@@ -11,7 +11,7 @@ extra: std.ArrayListUnmanaged(u32) = .{},
 /// On 64-bit systems, this array is used for big integers and associated metadata.
 /// Use the helper methods instead of accessing this directly in order to not
 /// violate the above mechanism.
-limbs: std.ArrayListUnmanaged(u64) = .{},
+limbs: std.ArrayListInlineUnmanaged(u64) = .{},
 /// In order to store references to strings in fewer bytes, we copy all
 /// string bytes into here. String bytes can be null. It is up to whomever
 /// is referencing the data here whether they want to store both index and length,
@@ -31,19 +31,19 @@ string_bytes: std.ArrayListUnmanaged(u8) = .{},
 ///    multi-threaded contention on an atomic counter.
 allocated_decls: std.SegmentedList(Module.Decl, 0) = .{},
 /// When a Decl object is freed from `allocated_decls`, it is pushed into this stack.
-decls_free_list: std.ArrayListUnmanaged(DeclIndex) = .{},
+decls_free_list: std.ArrayListInlineUnmanaged(DeclIndex) = .{},
 
 /// Same pattern as with `allocated_decls`.
 allocated_namespaces: std.SegmentedList(Module.Namespace, 0) = .{},
 /// Same pattern as with `decls_free_list`.
-namespaces_free_list: std.ArrayListUnmanaged(NamespaceIndex) = .{},
+namespaces_free_list: std.ArrayListInlineUnmanaged(NamespaceIndex) = .{},
 
 /// Some types such as enums, structs, and unions need to store mappings from field names
 /// to field index, or value to field index. In such cases, they will store the underlying
 /// field names and values directly, relying on one of these maps, stored separately,
 /// to provide lookup.
 /// These are not serialized; it is computed upon deserialization.
-maps: std.ArrayListUnmanaged(FieldMap) = .{},
+maps: std.ArrayListInlineUnmanaged(FieldMap) = .{},
 
 /// Used for finding the index inside `string_bytes`.
 string_table: std.HashMapUnmanaged(
@@ -87,10 +87,10 @@ first_dependency: std.AutoArrayHashMapUnmanaged(Depender, DepEntry.Index) = .{},
 /// up entries in this list as required. This is not stored in `extra` so that
 /// we can use `free_dep_entries` to track free indices, since dependencies are
 /// removed frequently.
-dep_entries: std.ArrayListUnmanaged(DepEntry) = .{},
+dep_entries: std.ArrayListInlineUnmanaged(DepEntry) = .{},
 /// Stores unused indices in `dep_entries` which can be reused without a full
 /// garbage collection pass.
-free_dep_entries: std.ArrayListUnmanaged(DepEntry.Index) = .{},
+free_dep_entries: std.ArrayListInlineUnmanaged(DepEntry.Index) = .{},
 
 pub const TrackedInst = extern struct {
     path_digest: Cache.BinDigest,
@@ -179,19 +179,19 @@ pub fn removeDependenciesForDepender(ip: *InternPool, gpa: Allocator, depender: 
     var opt_idx = (ip.first_dependency.fetchSwapRemove(depender) orelse return).value.toOptional();
 
     while (opt_idx.unwrap()) |idx| {
-        const dep = ip.dep_entries.items[@intFromEnum(idx)];
+        const dep = ip.dep_entries.slice()[@intFromEnum(idx)];
         opt_idx = dep.next_dependee;
 
         const prev_idx = dep.prev.unwrap() orelse {
             // This entry is the start of a list in some `*_deps`.
             // We cannot easily remove this mapping, so this must remain as a dummy entry.
-            ip.dep_entries.items[@intFromEnum(idx)].depender = .none;
+            ip.dep_entries.slice()[@intFromEnum(idx)].depender = .none;
             continue;
         };
 
-        ip.dep_entries.items[@intFromEnum(prev_idx)].next = dep.next;
+        ip.dep_entries.slice()[@intFromEnum(prev_idx)].next = dep.next;
         if (dep.next.unwrap()) |next_idx| {
-            ip.dep_entries.items[@intFromEnum(next_idx)].prev = dep.prev;
+            ip.dep_entries.slice()[@intFromEnum(next_idx)].prev = dep.prev;
         }
 
         ip.free_dep_entries.append(gpa, idx) catch {
@@ -206,7 +206,7 @@ pub const DependencyIterator = struct {
     next_entry: DepEntry.Index.Optional,
     pub fn next(it: *DependencyIterator) ?Depender {
         const idx = it.next_entry.unwrap() orelse return null;
-        const entry = it.ip.dep_entries.items[@intFromEnum(idx)];
+        const entry = it.ip.dep_entries.sliceConst()[@intFromEnum(idx)];
         it.next_entry = entry.next;
         return entry.depender.unwrap().?;
     }
@@ -223,7 +223,7 @@ pub fn dependencyIterator(ip: *const InternPool, dependee: Dependee) DependencyI
         .ip = ip,
         .next_entry = .none,
     };
-    if (ip.dep_entries.items[@intFromEnum(first_entry)].depender == .none) return .{
+    if (ip.dep_entries.sliceConst()[@intFromEnum(first_entry)].depender == .none) return .{
         .ip = ip,
         .next_entry = .none,
     };
@@ -245,7 +245,7 @@ pub fn addDependency(ip: *InternPool, gpa: Allocator, depender: Depender, depend
 
     // We're very likely to need space for a new entry - reserve it now to avoid
     // the need for error cleanup logic.
-    if (ip.free_dep_entries.items.len == 0) {
+    if (ip.free_dep_entries.info.len == 0) {
         try ip.dep_entries.ensureUnusedCapacity(gpa, 1);
     }
 
@@ -261,25 +261,25 @@ pub fn addDependency(ip: *InternPool, gpa: Allocator, depender: Depender, depend
                 .namespace_name => ip.namespace_name_deps,
             }.getOrPut(gpa, dependee_payload);
 
-            if (gop.found_existing and ip.dep_entries.items[@intFromEnum(gop.value_ptr.*)].depender == .none) {
+            if (gop.found_existing and ip.dep_entries.slice()[@intFromEnum(gop.value_ptr.*)].depender == .none) {
                 // Dummy entry, so we can reuse it rather than allocating a new one!
-                ip.dep_entries.items[@intFromEnum(gop.value_ptr.*)].next = .none;
+                ip.dep_entries.slice()[@intFromEnum(gop.value_ptr.*)].next = .none;
                 break :new_index gop.value_ptr.*;
             }
 
             // Prepend a new dependency.
             const new_index: DepEntry.Index, const ptr = if (ip.free_dep_entries.popOrNull()) |new_index| new: {
-                break :new .{ new_index, &ip.dep_entries.items[@intFromEnum(new_index)] };
-            } else .{ @enumFromInt(ip.dep_entries.items.len), ip.dep_entries.addOneAssumeCapacity() };
+                break :new .{ new_index, &ip.dep_entries.slice()[@intFromEnum(new_index)] };
+            } else .{ @enumFromInt(ip.dep_entries.info.len), ip.dep_entries.addOneAssumeCapacity() };
             ptr.next = if (gop.found_existing) gop.value_ptr.*.toOptional() else .none;
             gop.value_ptr.* = new_index;
             break :new_index new_index;
         },
     };
 
-    ip.dep_entries.items[@intFromEnum(new_index)].depender = depender.toOptional();
-    ip.dep_entries.items[@intFromEnum(new_index)].prev = .none;
-    ip.dep_entries.items[@intFromEnum(new_index)].next_dependee = first_depender_dep;
+    ip.dep_entries.slice()[@intFromEnum(new_index)].depender = depender.toOptional();
+    ip.dep_entries.slice()[@intFromEnum(new_index)].prev = .none;
+    ip.dep_entries.slice()[@intFromEnum(new_index)].next_dependee = first_depender_dep;
     ip.first_dependency.putAssumeCapacity(depender, new_index);
 }
 
@@ -683,7 +683,7 @@ pub const Key = union(enum) {
 
         /// Look up field index based on field name.
         pub fn nameIndex(self: ErrorSetType, ip: *const InternPool, name: NullTerminatedString) ?u32 {
-            const map = &ip.maps.items[@intFromEnum(self.names_map.unwrap().?)];
+            const map = &ip.maps.sliceConst()[@intFromEnum(self.names_map.unwrap().?)];
             const adapter: NullTerminatedString.Adapter = .{ .strings = self.names.get(ip) };
             const field_index = map.getIndexAdapted(name, adapter) orelse return null;
             return @intCast(field_index);
@@ -2079,7 +2079,7 @@ pub const LoadedStructType = struct {
             if (i >= self.field_types.len) return null;
             return i;
         };
-        const map = &ip.maps.items[@intFromEnum(names_map)];
+        const map = &ip.maps.sliceConst()[@intFromEnum(names_map)];
         const adapter: NullTerminatedString.Adapter = .{ .strings = self.field_names.get(ip) };
         const field_index = map.getIndexAdapted(name, adapter) orelse return null;
         return @intCast(field_index);
@@ -2557,7 +2557,7 @@ const LoadedEnumType = struct {
 
     /// Look up field index based on field name.
     pub fn nameIndex(self: LoadedEnumType, ip: *const InternPool, name: NullTerminatedString) ?u32 {
-        const map = &ip.maps.items[@intFromEnum(self.names_map)];
+        const map = &ip.maps.sliceConst()[@intFromEnum(self.names_map)];
         const adapter: NullTerminatedString.Adapter = .{ .strings = self.names.get(ip) };
         const field_index = map.getIndexAdapted(name, adapter) orelse return null;
         return @intCast(field_index);
@@ -2577,7 +2577,7 @@ const LoadedEnumType = struct {
             else => unreachable,
         };
         if (self.values_map.unwrap()) |values_map| {
-            const map = &ip.maps.items[@intFromEnum(values_map)];
+            const map = &ip.maps.sliceConst()[@intFromEnum(values_map)];
             const adapter: Index.Adapter = .{ .indexes = self.values.get(ip) };
             const field_index = map.getIndexAdapted(int_tag_val, adapter) orelse return null;
             return @intCast(field_index);
@@ -4551,7 +4551,7 @@ pub fn deinit(ip: *InternPool, gpa: Allocator) void {
     ip.namespaces_free_list.deinit(gpa);
     ip.allocated_namespaces.deinit(gpa);
 
-    for (ip.maps.items) |*map| map.deinit(gpa);
+    for (ip.maps.slice()) |*map| map.deinit(gpa);
     ip.maps.deinit(gpa);
 
     ip.string_table.deinit(gpa);
@@ -6674,7 +6674,7 @@ pub fn getErrorSetType(
     const prev_extra_len = ip.extra.items.len;
     errdefer ip.extra.items.len = prev_extra_len;
 
-    const predicted_names_map: MapIndex = @enumFromInt(ip.maps.items.len);
+    const predicted_names_map: MapIndex = @enumFromInt(ip.maps.info.len);
 
     const error_set_extra_index = ip.addExtraAssumeCapacity(Tag.ErrorSet{
         .names_len = @intCast(names.len),
@@ -7028,7 +7028,7 @@ pub const WipEnumType = struct {
             return null;
         }
         assert(ip.typeOf(value) == @as(Index, @enumFromInt(ip.extra.items[wip.tag_ty_index])));
-        const map = &ip.maps.items[@intFromEnum(wip.values_map.unwrap().?)];
+        const map = &ip.maps.slice()[@intFromEnum(wip.values_map.unwrap().?)];
         const field_index = map.count();
         const indexes = ip.extra.items[wip.values_start..][0..field_index];
         const adapter: Index.Adapter = .{ .indexes = @ptrCast(indexes) };
@@ -7362,7 +7362,7 @@ fn addStringsToMap(
     map_index: MapIndex,
     strings: []const NullTerminatedString,
 ) void {
-    const map = &ip.maps.items[@intFromEnum(map_index)];
+    const map = &ip.maps.slice()[@intFromEnum(map_index)];
     const adapter: NullTerminatedString.Adapter = .{ .strings = strings };
     for (strings) |string| {
         const gop = map.getOrPutAssumeCapacityAdapted(string, adapter);
@@ -7375,7 +7375,7 @@ fn addIndexesToMap(
     map_index: MapIndex,
     indexes: []const Index,
 ) void {
-    const map = &ip.maps.items[@intFromEnum(map_index)];
+    const map = &ip.maps.slice()[@intFromEnum(map_index)];
     const adapter: Index.Adapter = .{ .indexes = indexes };
     for (indexes) |index| {
         const gop = map.getOrPutAssumeCapacityAdapted(index, adapter);
@@ -7388,7 +7388,7 @@ fn addMap(ip: *InternPool, gpa: Allocator, cap: usize) Allocator.Error!MapIndex 
     errdefer _ = ip.maps.pop();
     ptr.* = .{};
     try ptr.ensureTotalCapacity(gpa, cap);
-    return @enumFromInt(ip.maps.items.len - 1);
+    return @enumFromInt(ip.maps.info.len - 1);
 }
 
 /// This operation only happens under compile error conditions.
@@ -7493,7 +7493,7 @@ fn addLimbsExtraAssumeCapacity(ip: *InternPool, extra: anytype) u32 {
         @sizeOf(u64) => {},
         else => @compileError("unsupported host"),
     }
-    const result: u32 = @intCast(ip.limbs.items.len);
+    const result: u32 = @intCast(ip.limbs.info.len);
     inline for (@typeInfo(@TypeOf(extra)).Struct.fields, 0..) |field, i| {
         const new: u32 = switch (field.type) {
             u32 => @field(extra, field.name),
@@ -7503,7 +7503,7 @@ fn addLimbsExtraAssumeCapacity(ip: *InternPool, extra: anytype) u32 {
         if (i % 2 == 0) {
             ip.limbs.appendAssumeCapacity(new);
         } else {
-            ip.limbs.items[ip.limbs.items.len - 1] |= @as(u64, new) << 32;
+            ip.limbs.slice()[ip.limbs.info.len - 1] |= @as(u64, new) << 32;
         }
     }
     return result;
@@ -7573,7 +7573,7 @@ fn limbData(ip: *const InternPool, comptime T: type, index: usize) T {
     }
     var result: T = undefined;
     inline for (@typeInfo(T).Struct.fields, 0..) |field, i| {
-        const host_int = ip.limbs.items[index + i / 2];
+        const host_int = ip.limbs.sliceConst()[index + i / 2];
         const int32 = if (i % 2 == 0)
             @as(u32, @truncate(host_int))
         else
@@ -7598,7 +7598,7 @@ fn limbSlice(ip: *const InternPool, comptime S: type, limb_index: u32, len: u32)
         },
         @sizeOf(u64) => {
             const start = limb_index + @divExact(field_count, 2);
-            return ip.limbs.items[start..][0..len];
+            return ip.limbs.sliceConst()[start..][0..len];
         },
         else => @compileError("unsupported host"),
     }
@@ -7612,7 +7612,7 @@ const LimbsAsIndexes = struct {
 fn limbsSliceToIndex(ip: *const InternPool, limbs: []const Limb) LimbsAsIndexes {
     const host_slice = switch (@sizeOf(Limb)) {
         @sizeOf(u32) => ip.extra.items,
-        @sizeOf(u64) => ip.limbs.items,
+        @sizeOf(u64) => ip.limbs.sliceConst(),
         else => @compileError("unsupported host"),
     };
     // TODO: https://github.com/ziglang/zig/issues/1738
@@ -7626,7 +7626,7 @@ fn limbsSliceToIndex(ip: *const InternPool, limbs: []const Limb) LimbsAsIndexes 
 fn limbsIndexToSlice(ip: *const InternPool, limbs: LimbsAsIndexes) []const Limb {
     return switch (@sizeOf(Limb)) {
         @sizeOf(u32) => ip.extra.items[limbs.start..][0..limbs.len],
-        @sizeOf(u64) => ip.limbs.items[limbs.start..][0..limbs.len],
+        @sizeOf(u64) => ip.limbs.sliceConst()[limbs.start..][0..limbs.len],
         else => @compileError("unsupported host"),
     };
 }
@@ -8189,7 +8189,7 @@ pub fn dump(ip: *const InternPool) void {
 fn dumpStatsFallible(ip: *const InternPool, arena: Allocator) anyerror!void {
     const items_size = (1 + 4) * ip.items.len;
     const extra_size = 4 * ip.extra.items.len;
-    const limbs_size = 8 * ip.limbs.items.len;
+    const limbs_size = 8 * ip.limbs.info.len;
     const decls_size = ip.allocated_decls.len * @sizeOf(Module.Decl);
 
     // TODO: map overhead size is not taken into account
@@ -8208,7 +8208,7 @@ fn dumpStatsFallible(ip: *const InternPool, arena: Allocator) anyerror!void {
         items_size,
         ip.extra.items.len,
         extra_size,
-        ip.limbs.items.len,
+        ip.limbs.info.len,
         limbs_size,
         ip.allocated_decls.len,
         decls_size,
@@ -8546,7 +8546,7 @@ pub fn dumpGenericInstancesFallible(ip: *const InternPool, allocator: Allocator)
     var bw = std.io.bufferedWriter(std.io.getStdErr().writer());
     const w = bw.writer();
 
-    var instances: std.AutoArrayHashMapUnmanaged(Index, std.ArrayListUnmanaged(Index)) = .{};
+    var instances: std.AutoArrayHashMapUnmanaged(Index, std.ArrayListInlineUnmanaged(Index)) = .{};
     const datas = ip.items.items(.data);
     for (ip.items.items(.tag), 0..) |tag, i| {
         if (tag != .func_instance) continue;
@@ -8559,9 +8559,9 @@ pub fn dumpGenericInstancesFallible(ip: *const InternPool, allocator: Allocator)
     }
 
     const SortContext = struct {
-        values: []std.ArrayListUnmanaged(Index),
+        values: []std.ArrayListInlineUnmanaged(Index),
         pub fn lessThan(ctx: @This(), a_index: usize, b_index: usize) bool {
-            return ctx.values[a_index].items.len > ctx.values[b_index].items.len;
+            return ctx.values[a_index].info.len > ctx.values[b_index].info.len;
         }
     };
 
@@ -8569,8 +8569,8 @@ pub fn dumpGenericInstancesFallible(ip: *const InternPool, allocator: Allocator)
     var it = instances.iterator();
     while (it.next()) |entry| {
         const generic_fn_owner_decl = ip.declPtrConst(ip.funcDeclOwner(entry.key_ptr.*));
-        try w.print("{} ({}): \n", .{ generic_fn_owner_decl.name.fmt(ip), entry.value_ptr.items.len });
-        for (entry.value_ptr.items) |index| {
+        try w.print("{} ({}): \n", .{ generic_fn_owner_decl.name.fmt(ip), entry.value_ptr.info.len });
+        for (entry.value_ptr.sliceConst()) |index| {
             const func = ip.extraFuncInstance(datas[@intFromEnum(index)]);
             const owner_decl = ip.declPtrConst(func.owner_decl);
             try w.print("  {}: (", .{owner_decl.name.fmt(ip)});
@@ -9453,7 +9453,7 @@ pub fn addFieldName(
     names_start: u32,
     name: NullTerminatedString,
 ) ?u32 {
-    const map = &ip.maps.items[@intFromEnum(names_map)];
+    const map = &ip.maps.slice()[@intFromEnum(names_map)];
     const field_index = map.count();
     const strings = ip.extra.items[names_start..][0..field_index];
     const adapter: NullTerminatedString.Adapter = .{ .strings = @ptrCast(strings) };

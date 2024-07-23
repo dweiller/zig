@@ -23,7 +23,7 @@ debug_output: DebugInfoOutput,
 target: *const std.Target,
 err_msg: ?*ErrorMsg = null,
 src_loc: Module.SrcLoc,
-code: *std.ArrayList(u8),
+code: *std.ArrayListInline(u8),
 
 prev_di_line: u32,
 prev_di_column: u32,
@@ -34,7 +34,7 @@ prev_di_pc: usize,
 branch_types: std.AutoHashMapUnmanaged(Mir.Inst.Index, BranchType) = .{},
 /// For every forward branch, maps the target instruction to a list of
 /// branches which branch to this target instruction
-branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListUnmanaged(Mir.Inst.Index)) = .{},
+branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListInlineUnmanaged(Mir.Inst.Index)) = .{},
 /// For backward branches: stores the code offset of the target
 /// instruction
 ///
@@ -572,7 +572,7 @@ fn lowerBranches(emit: *Emit) !void {
                 if (emit.branch_forward_origins.getPtr(target_inst)) |origin_list| {
                     try origin_list.append(gpa, inst);
                 } else {
-                    var origin_list: std.ArrayListUnmanaged(Mir.Inst.Index) = .{};
+                    var origin_list: std.ArrayListInlineUnmanaged(Mir.Inst.Index) = .{};
                     try origin_list.append(gpa, inst);
                     try emit.branch_forward_origins.put(gpa, target_inst, origin_list);
                 }

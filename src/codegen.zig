@@ -50,7 +50,7 @@ pub fn generateFunction(
     func_index: InternPool.Index,
     air: Air,
     liveness: Liveness,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
 ) CodeGenError!Result {
     const zcu = lf.comp.module.?;
@@ -80,7 +80,7 @@ pub fn generateLazyFunction(
     lf: *link.File,
     src_loc: Module.SrcLoc,
     lazy_sym: link.File.LazySymbol,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
 ) CodeGenError!Result {
     const zcu = lf.comp.module.?;
@@ -108,7 +108,7 @@ pub fn generateLazySymbol(
     lazy_sym: link.File.LazySymbol,
     // TODO don't use an "out" parameter like this; put it in the result instead
     alignment: *Alignment,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
     reloc_info: RelocInfo,
 ) CodeGenError!Result {
@@ -172,7 +172,7 @@ pub fn generateSymbol(
     bin_file: *link.File,
     src_loc: Module.SrcLoc,
     val: Value,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
     reloc_info: RelocInfo,
 ) CodeGenError!Result {
@@ -503,7 +503,7 @@ pub fn generateSymbol(
                             if (Type.fromInterned(field_ty).zigTypeTag(mod) == .Pointer) {
                                 const field_size = math.cast(usize, Type.fromInterned(field_ty).abiSize(mod)) orelse
                                     return error.Overflow;
-                                var tmp_list = try std.ArrayList(u8).initCapacity(code.allocator, field_size);
+                                var tmp_list = try std.ArrayListInline(u8).initCapacity(code.allocator, field_size);
                                 defer tmp_list.deinit();
                                 switch (try generateSymbol(bin_file, src_loc, Value.fromInterned(field_val), &tmp_list, debug_output, reloc_info)) {
                                     .ok => @memcpy(code.items[current_pos..][0..tmp_list.items.len], tmp_list.items),
@@ -619,7 +619,7 @@ fn lowerPtr(
     bin_file: *link.File,
     src_loc: Module.SrcLoc,
     ptr_val: InternPool.Index,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
     reloc_info: RelocInfo,
     prev_offset: u64,
@@ -684,7 +684,7 @@ fn lowerAnonDeclRef(
     lf: *link.File,
     src_loc: Module.SrcLoc,
     anon_decl: InternPool.Key.Ptr.BaseAddr.AnonDecl,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
     reloc_info: RelocInfo,
     offset: u64,
@@ -731,7 +731,7 @@ fn lowerDeclRef(
     lf: *link.File,
     src_loc: Module.SrcLoc,
     decl_index: InternPool.DeclIndex,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
     reloc_info: RelocInfo,
     offset: u64,

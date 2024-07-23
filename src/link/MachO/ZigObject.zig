@@ -659,7 +659,7 @@ pub fn updateFunc(
     self.freeUnnamedConsts(macho_file, decl_index);
     macho_file.getSymbol(sym_index).getAtom(macho_file).?.freeRelocs(macho_file);
 
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     var decl_state: ?Dwarf.DeclState = if (self.dwarf) |*dw| try dw.initDeclState(mod, decl_index) else null;
@@ -677,7 +677,7 @@ pub fn updateFunc(
     );
 
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| {
             func.analysis(&mod.intern_pool).state = .codegen_failure;
             try mod.failed_decls.put(mod.gpa, decl_index, em);
@@ -734,7 +734,7 @@ pub fn updateDecl(
     macho_file.getSymbol(sym_index).getAtom(macho_file).?.freeRelocs(macho_file);
 
     const gpa = macho_file.base.comp.gpa;
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     var decl_state: ?Dwarf.DeclState = if (self.dwarf) |*dw| try dw.initDeclState(mod, decl_index) else null;
@@ -747,7 +747,7 @@ pub fn updateDecl(
     });
 
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| {
             decl.analysis = .codegen_failure;
             try mod.failed_decls.put(mod.gpa, decl_index, em);
@@ -1121,7 +1121,7 @@ fn lowerConst(
 ) !LowerConstResult {
     const gpa = macho_file.base.comp.gpa;
 
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     const sym_index = try self.addAtom(macho_file);
@@ -1132,7 +1132,7 @@ fn lowerConst(
         .parent_atom_index = sym_index,
     });
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| return .{ .fail = em },
     };
 
@@ -1268,7 +1268,7 @@ fn updateLazySymbol(
     const mod = macho_file.base.comp.module.?;
 
     var required_alignment: Atom.Alignment = .none;
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     const name_str_index = blk: {
@@ -1298,7 +1298,7 @@ fn updateLazySymbol(
         .{ .parent_atom_index = symbol_index },
     );
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| {
             log.err("{s}", .{em.msg});
             return error.CodegenFail;

@@ -111,7 +111,7 @@ fn LivenessPassData(comptime pass: LivenessPass) type {
 
             /// The extra data initialized by the `loop_analysis` pass for this pass to consume.
             /// Owned by this struct during this pass.
-            old_extra: std.ArrayListUnmanaged(u32) = .{},
+            old_extra: std.ArrayListInlineUnmanaged(u32) = .{},
 
             const BlockScope = struct {
                 /// The set of instructions which are alive upon a `br` to this block.
@@ -730,7 +730,7 @@ pub fn getSwitchBr(l: Liveness, gpa: Allocator, inst: Air.Inst.Index, cases_len:
     const else_death_count = l.extra[index];
     index += 1;
 
-    var deaths = std.ArrayList([]const Air.Inst.Index).init(gpa);
+    var deaths = std.ArrayListInline([]const Air.Inst.Index).init(gpa);
     defer deaths.deinit();
     try deaths.ensureTotalCapacity(cases_len + 1);
 
@@ -839,7 +839,7 @@ const Analysis = struct {
     intern_pool: *InternPool,
     tomb_bits: []usize,
     special: std.AutoHashMapUnmanaged(Air.Inst.Index, u32),
-    extra: std.ArrayListUnmanaged(u32),
+    extra: std.ArrayListInlineUnmanaged(u32),
 
     fn storeTombBits(a: *Analysis, inst: Air.Inst.Index, tomb_bits: Bpi) void {
         const usize_index = (inst * bpi) / @bitSizeOf(usize);
@@ -855,7 +855,7 @@ const Analysis = struct {
 
     fn addExtraAssumeCapacity(a: *Analysis, extra: anytype) u32 {
         const fields = std.meta.fields(@TypeOf(extra));
-        const result = @as(u32, @intCast(a.extra.items.len));
+        const result = @as(u32, @intCast(a.extra.info.len));
         inline for (fields) |field| {
             a.extra.appendAssumeCapacity(switch (field.type) {
                 u32 => @field(extra, field.name),
@@ -1439,7 +1439,7 @@ fn analyzeInstBlock(
                 log.debug("[{}] %{}: block deaths are {}", .{
                     pass,
                     inst,
-                    fmtInstList(@ptrCast(a.extra.items[extra_index + 1 ..][0..num_deaths])),
+                    fmtInstList(@ptrCast(a.extra.sliceConst()[extra_index + 1 ..][0..num_deaths])),
                 });
             }
         },
@@ -1472,7 +1472,7 @@ fn analyzeInstLoop(
             const num_breaks = data.breaks.count();
             try a.extra.ensureUnusedCapacity(gpa, 1 + num_breaks);
 
-            const extra_index = @as(u32, @intCast(a.extra.items.len));
+            const extra_index = @as(u32, @intCast(a.extra.info.len));
             a.extra.appendAssumeCapacity(num_breaks);
 
             var it = data.breaks.keyIterator();
@@ -1514,11 +1514,11 @@ fn analyzeInstLoop(
         .main_analysis => {
             const extra_idx = a.special.fetchRemove(inst).?.value; // remove because this data does not exist after analysis
 
-            const num_breaks = data.old_extra.items[extra_idx];
-            const breaks: []const Air.Inst.Index = @ptrCast(data.old_extra.items[extra_idx + 1 ..][0..num_breaks]);
+            const num_breaks = data.old_extra.sliceConst()[extra_idx];
+            const breaks: []const Air.Inst.Index = @ptrCast(data.old_extra.sliceConst()[extra_idx + 1 ..][0..num_breaks]);
 
-            const num_loop_live = data.old_extra.items[extra_idx + num_breaks + 1];
-            const loop_live: []const Air.Inst.Index = @ptrCast(data.old_extra.items[extra_idx + num_breaks + 2 ..][0..num_loop_live]);
+            const num_loop_live = data.old_extra.sliceConst()[extra_idx + num_breaks + 1];
+            const loop_live: []const Air.Inst.Index = @ptrCast(data.old_extra.sliceConst()[extra_idx + num_breaks + 2 ..][0..num_loop_live]);
 
             // This is necessarily not in the same control flow branch, because loops are noreturn
             data.live_set.clearRetainingCapacity();
@@ -1604,10 +1604,10 @@ fn analyzeInstCondBr(
             // Operands which are alive in one branch but not the other need to die at the start of
             // the peer branch.
 
-            var then_mirrored_deaths: std.ArrayListUnmanaged(Air.Inst.Index) = .{};
+            var then_mirrored_deaths: std.ArrayListInlineUnmanaged(Air.Inst.Index) = .{};
             defer then_mirrored_deaths.deinit(gpa);
 
-            var else_mirrored_deaths: std.ArrayListUnmanaged(Air.Inst.Index) = .{};
+            var else_mirrored_deaths: std.ArrayListInlineUnmanaged(Air.Inst.Index) = .{};
             defer else_mirrored_deaths.deinit(gpa);
 
             // Note: this invalidates `else_live`, but expands `then_live` to be their union
@@ -1638,8 +1638,8 @@ fn analyzeInstCondBr(
                 }
             }
 
-            log.debug("[{}] %{}: 'then' branch mirrored deaths are {}", .{ pass, inst, fmtInstList(then_mirrored_deaths.items) });
-            log.debug("[{}] %{}: 'else' branch mirrored deaths are {}", .{ pass, inst, fmtInstList(else_mirrored_deaths.items) });
+            log.debug("[{}] %{}: 'then' branch mirrored deaths are {}", .{ pass, inst, fmtInstList(then_mirrored_deaths.sliceConst()) });
+            log.debug("[{}] %{}: 'else' branch mirrored deaths are {}", .{ pass, inst, fmtInstList(else_mirrored_deaths.sliceConst()) });
 
             data.live_set.deinit(gpa);
             data.live_set = then_live.move(); // Really the union of both live sets
@@ -1647,15 +1647,15 @@ fn analyzeInstCondBr(
             log.debug("[{}] %{}: new live set is {}", .{ pass, inst, fmtInstSet(&data.live_set) });
 
             // Write the mirrored deaths to `extra`
-            const then_death_count = @as(u32, @intCast(then_mirrored_deaths.items.len));
-            const else_death_count = @as(u32, @intCast(else_mirrored_deaths.items.len));
+            const then_death_count = @as(u32, @intCast(then_mirrored_deaths.info.len));
+            const else_death_count = @as(u32, @intCast(else_mirrored_deaths.info.len));
             try a.extra.ensureUnusedCapacity(gpa, std.meta.fields(CondBr).len + then_death_count + else_death_count);
             const extra_index = a.addExtraAssumeCapacity(CondBr{
                 .then_death_count = then_death_count,
                 .else_death_count = else_death_count,
             });
-            a.extra.appendSliceAssumeCapacity(@ptrCast(then_mirrored_deaths.items));
-            a.extra.appendSliceAssumeCapacity(@ptrCast(else_mirrored_deaths.items));
+            a.extra.appendSliceAssumeCapacity(@ptrCast(then_mirrored_deaths.sliceConst()));
+            a.extra.appendSliceAssumeCapacity(@ptrCast(else_mirrored_deaths.sliceConst()));
             try a.special.put(gpa, inst, extra_index);
         },
     }
@@ -1696,7 +1696,7 @@ fn analyzeInstSwitchBr(
             // to understand it, I encourage looking at `analyzeInstCondBr` first.
 
             const DeathSet = std.AutoHashMapUnmanaged(Air.Inst.Index, void);
-            const DeathList = std.ArrayListUnmanaged(Air.Inst.Index);
+            const DeathList = std.ArrayListInlineUnmanaged(Air.Inst.Index);
 
             var case_live_sets = try gpa.alloc(std.AutoHashMapUnmanaged(Air.Inst.Index, void), ncases + 1); // +1 for else
             defer gpa.free(case_live_sets);
@@ -1749,7 +1749,7 @@ fn analyzeInstSwitchBr(
                 }
 
                 for (mirrored_deaths, 0..) |mirrored, i| {
-                    log.debug("[{}] %{}: case {} mirrored deaths are {}", .{ pass, inst, i, fmtInstList(mirrored.items) });
+                    log.debug("[{}] %{}: case {} mirrored deaths are {}", .{ pass, inst, i, fmtInstList(mirrored.sliceConst()) });
                 }
 
                 data.live_set.deinit(gpa);
@@ -1758,18 +1758,18 @@ fn analyzeInstSwitchBr(
                 log.debug("[{}] %{}: new live set is {}", .{ pass, inst, fmtInstSet(&data.live_set) });
             }
 
-            const else_death_count = @as(u32, @intCast(mirrored_deaths[ncases].items.len));
+            const else_death_count = @as(u32, @intCast(mirrored_deaths[ncases].info.len));
             const extra_index = try a.addExtra(SwitchBr{
                 .else_death_count = else_death_count,
             });
             for (mirrored_deaths[0..ncases]) |mirrored| {
-                const num = @as(u32, @intCast(mirrored.items.len));
+                const num = @as(u32, @intCast(mirrored.info.len));
                 try a.extra.ensureUnusedCapacity(gpa, num + 1);
                 a.extra.appendAssumeCapacity(num);
-                a.extra.appendSliceAssumeCapacity(@ptrCast(mirrored.items));
+                a.extra.appendSliceAssumeCapacity(@ptrCast(mirrored.sliceConst()));
             }
             try a.extra.ensureUnusedCapacity(gpa, else_death_count);
-            a.extra.appendSliceAssumeCapacity(@ptrCast(mirrored_deaths[ncases].items));
+            a.extra.appendSliceAssumeCapacity(@ptrCast(mirrored_deaths[ncases].sliceConst()));
             try a.special.put(gpa, inst, extra_index);
         },
     }
@@ -1888,7 +1888,7 @@ fn AnalyzeBigOperands(comptime pass: LivenessPass) type {
 
                     const extra_tombs = big.extra_tombs[0..num];
 
-                    const extra_index = @as(u32, @intCast(big.a.extra.items.len));
+                    const extra_index = @as(u32, @intCast(big.a.extra.info.len));
                     try big.a.extra.appendSlice(gpa, extra_tombs);
                     try big.a.special.put(gpa, big.inst, extra_index);
                 },

@@ -295,7 +295,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Package.Module {
         if (resolved_target.llvm_cpu_features) |x| break :b x;
         if (!options.global.use_llvm) break :b null;
 
-        var buf = std.ArrayList(u8).init(arena);
+        var buf = std.ArrayListInline(u8).init(arena);
         for (target.cpu.arch.allFeaturesList(), 0..) |feature, index_usize| {
             const index = @as(std.Target.Cpu.Feature.Set.Index, @intCast(index_usize));
             const is_enabled = target.cpu.features.isEnabled(index);
@@ -308,11 +308,11 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Package.Module {
                 buf.appendSliceAssumeCapacity(",");
             }
         }
-        if (buf.items.len == 0) break :b "";
-        assert(std.mem.endsWith(u8, buf.items, ","));
-        buf.items[buf.items.len - 1] = 0;
-        buf.shrinkAndFree(buf.items.len);
-        break :b buf.items[0 .. buf.items.len - 1 :0].ptr;
+        if (buf.slice().len == 0) break :b "";
+        assert(std.mem.endsWith(u8, buf.slice(), ","));
+        buf.slice()[buf.slice().len - 1] = 0;
+        buf.shrinkAndFree(buf.slice().len);
+        break :b buf.slice()[0 .. buf.slice().len - 1 :0].ptr;
     };
 
     const mod = try arena.create(Module);

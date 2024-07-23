@@ -91,7 +91,7 @@ pub const JobQueue = struct {
     /// `table` may be missing some tasks such as ones that failed, so this
     /// field contains references to all of them.
     /// Protected by `mutex`.
-    all_fetches: std.ArrayListUnmanaged(*Fetch) = .{},
+    all_fetches: std.ArrayListInlineUnmanaged(*Fetch) = .{},
 
     http_client: *std.http.Client,
     thread_pool: *ThreadPool,
@@ -120,8 +120,8 @@ pub const JobQueue = struct {
     pub const UnlazySet = std.AutoArrayHashMapUnmanaged(Manifest.MultiHashHexDigest, void);
 
     pub fn deinit(jq: *JobQueue) void {
-        if (jq.all_fetches.items.len == 0) return;
-        const gpa = jq.all_fetches.items[0].arena.child_allocator;
+        if (jq.all_fetches.info.len == 0) return;
+        const gpa = jq.all_fetches.sliceConst()[0].arena.child_allocator;
         jq.table.deinit(gpa);
         // These must be deinitialized in reverse order because subsequent
         // `Fetch` instances are allocated in prior ones' arenas.
@@ -134,10 +134,10 @@ pub const JobQueue = struct {
 
     /// Dumps all subsequent error bundles into the first one.
     pub fn consolidateErrors(jq: *JobQueue) !void {
-        const root = &jq.all_fetches.items[0].error_bundle;
+        const root = &jq.all_fetches.sliceConst()[0].error_bundle;
         const gpa = root.gpa;
-        for (jq.all_fetches.items[1..]) |fetch| {
-            if (fetch.error_bundle.root_list.items.len > 0) {
+        for (jq.all_fetches.sliceConst()[1..]) |fetch| {
+            if (fetch.error_bundle.root_list.info.len > 0) {
                 var bundle = try fetch.error_bundle.toOwnedBundle("");
                 defer bundle.deinit(gpa);
                 try root.addBundleAsRoots(bundle);
@@ -147,7 +147,7 @@ pub const JobQueue = struct {
 
     /// Creates the dependencies.zig source code for the build runner to obtain
     /// via `@import("@dependencies")`.
-    pub fn createDependenciesSource(jq: *JobQueue, buf: *std.ArrayList(u8)) Allocator.Error!void {
+    pub fn createDependenciesSource(jq: *JobQueue, buf: *std.ArrayListInline(u8)) Allocator.Error!void {
         const keys = jq.table.keys();
 
         assert(keys.len != 0); // caller should have added the first one
@@ -167,7 +167,7 @@ pub const JobQueue = struct {
         }, .{ .keys = keys }));
 
         for (keys, jq.table.values()) |hash, fetch| {
-            if (fetch == jq.all_fetches.items[0]) {
+            if (fetch == jq.all_fetches.sliceConst()[0]) {
                 // The first one is a dummy package for the current project.
                 continue;
             }
@@ -244,7 +244,7 @@ pub const JobQueue = struct {
             \\
         );
 
-        const root_fetch = jq.all_fetches.items[0];
+        const root_fetch = jq.all_fetches.sliceConst()[0];
         const root_manifest = &root_fetch.manifest.?;
 
         for (root_manifest.dependencies.keys(), root_manifest.dependencies.values()) |name, dep| {
@@ -257,7 +257,7 @@ pub const JobQueue = struct {
         try buf.appendSlice("};\n");
     }
 
-    pub fn createEmptyDependenciesSource(buf: *std.ArrayList(u8)) Allocator.Error!void {
+    pub fn createEmptyDependenciesSource(buf: *std.ArrayListInline(u8)) Allocator.Error!void {
         try buf.appendSlice(
             \\pub const packages = struct {};
             \\pub const root_deps: []const struct { []const u8, []const u8 } = &.{};
@@ -550,7 +550,7 @@ fn runResource(
             .notes_len = notes_len,
         });
         const notes_start = try eb.reserveNotes(notes_len);
-        eb.extra.items[notes_start] = @intFromEnum(try eb.addErrorMessage(.{
+        eb.extra.slice()[notes_start] = @intFromEnum(try eb.addErrorMessage(.{
             .msg = try eb.printString("expected .hash = \"{s}\",", .{&actual_hex}),
         }));
         return error.FetchFailed;
@@ -1012,7 +1012,7 @@ fn initResource(f: *Fetch, uri: std.Uri, server_header_buffer: []u8) RunError!Re
                 .notes_len = notes_len,
             });
             const notes_start = try eb.reserveNotes(notes_len);
-            eb.extra.items[notes_start] = @intFromEnum(try eb.addErrorMessage(.{
+            eb.extra.slice()[notes_start] = @intFromEnum(try eb.addErrorMessage(.{
                 .msg = try eb.printString("try .url = \"{;+/}#{}\",", .{
                     uri, std.fmt.fmtSliceHexLower(&want_oid),
                 }),
@@ -1329,9 +1329,9 @@ fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource) anyerror!Unpac
             var diagnostics: git.Diagnostics = .{ .allocator = arena };
             try repository.checkout(out_dir, want_oid, &diagnostics);
 
-            if (diagnostics.errors.items.len > 0) {
-                try res.allocErrors(arena, diagnostics.errors.items.len, "unable to unpack packfile");
-                for (diagnostics.errors.items) |item| {
+            if (diagnostics.errors.info.len > 0) {
+                try res.allocErrors(arena, diagnostics.errors.info.len, "unable to unpack packfile");
+                for (diagnostics.errors.sliceConst()) |item| {
                     switch (item) {
                         .unable_to_create_file => |i| res.unableToCreateFile(i.file_name, i.code),
                         .unable_to_create_sym_link => |i| res.unableToCreateSymLink(i.file_name, i.link_name, i.code),
@@ -1433,10 +1433,10 @@ fn computeHash(
     const root_dir = pkg_path.root_dir.handle;
 
     // Collect all files, recursively, then sort.
-    var all_files = std.ArrayList(*HashedFile).init(gpa);
+    var all_files = std.ArrayListInline(*HashedFile).init(gpa);
     defer all_files.deinit();
 
-    var deleted_files = std.ArrayList(*DeletedFile).init(gpa);
+    var deleted_files = std.ArrayListInline(*DeletedFile).init(gpa);
     defer deleted_files.deinit();
 
     // Track directories which had any files deleted from them so that empty directories
@@ -1540,11 +1540,11 @@ fn computeHash(
         }
     }
 
-    std.mem.sortUnstable(*HashedFile, all_files.items, {}, HashedFile.lessThan);
+    std.mem.sortUnstable(*HashedFile, all_files.slice(), {}, HashedFile.lessThan);
 
     var hasher = Manifest.Hash.init(.{});
     var any_failures = false;
-    for (all_files.items) |hashed_file| {
+    for (all_files.sliceConst()) |hashed_file| {
         hashed_file.failure catch |err| {
             any_failures = true;
             try eb.addRootErrorMessage(.{
@@ -1555,7 +1555,7 @@ fn computeHash(
         };
         hasher.update(&hashed_file.hash);
     }
-    for (deleted_files.items) |deleted_file| {
+    for (deleted_files.sliceConst()) |deleted_file| {
         deleted_file.failure catch |err| {
             any_failures = true;
             try eb.addRootErrorMessage(.{
@@ -1572,7 +1572,7 @@ fn computeHash(
         assert(!f.job_queue.recursive);
         // Print something to stdout that can be text diffed to figure out why
         // the package hash is different.
-        dumpHashInfo(all_files.items) catch |err| {
+        dumpHashInfo(all_files.sliceConst()) catch |err| {
             std.debug.print("unable to write to stdout: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };
@@ -1914,21 +1914,21 @@ const UnpackResult = struct {
             if (item.excluded(filter)) continue;
             switch (item) {
                 .unable_to_create_sym_link => |info| {
-                    eb.extra.items[note_i] = @intFromEnum(try eb.addErrorMessage(.{
+                    eb.extra.slice()[note_i] = @intFromEnum(try eb.addErrorMessage(.{
                         .msg = try eb.printString("unable to create symlink from '{s}' to '{s}': {s}", .{
                             info.file_name, info.link_name, @errorName(info.code),
                         }),
                     }));
                 },
                 .unable_to_create_file => |info| {
-                    eb.extra.items[note_i] = @intFromEnum(try eb.addErrorMessage(.{
+                    eb.extra.slice()[note_i] = @intFromEnum(try eb.addErrorMessage(.{
                         .msg = try eb.printString("unable to create file '{s}': {s}", .{
                             info.file_name, @errorName(info.code),
                         }),
                     }));
                 },
                 .unsupported_file_type => |info| {
-                    eb.extra.items[note_i] = @intFromEnum(try eb.addErrorMessage(.{
+                    eb.extra.slice()[note_i] = @intFromEnum(try eb.addErrorMessage(.{
                         .msg = try eb.printString("file '{s}' has unsupported type '{c}'", .{
                             info.file_name, info.file_type,
                         }),
@@ -1974,7 +1974,7 @@ const UnpackResult = struct {
         // output errors to string
         var errors = try fetch.error_bundle.toOwnedBundle("");
         defer errors.deinit(gpa);
-        var out = std.ArrayList(u8).init(gpa);
+        var out = std.ArrayListInline(u8).init(gpa);
         defer out.deinit();
         try errors.renderToWriter(.{ .ttyconf = .no_color }, out.writer());
         try std.testing.expectEqualStrings(
@@ -1982,7 +1982,7 @@ const UnpackResult = struct {
             \\    note: unable to create symlink from 'dir2/file2' to 'filename': SymlinkError
             \\    note: file 'dir2/file4' has unsupported type 'x'
             \\
-        , out.items);
+        , out.sliceConst());
     }
 };
 
@@ -2311,9 +2311,9 @@ const TestFetchBuilder = struct {
         var package_dir = try self.packageDir();
         defer package_dir.close();
 
-        var actual_files: std.ArrayListUnmanaged([]u8) = .{};
+        var actual_files: std.ArrayListInlineUnmanaged([]u8) = .{};
         defer actual_files.deinit(std.testing.allocator);
-        defer for (actual_files.items) |file| std.testing.allocator.free(file);
+        defer for (actual_files.slice()) |file| std.testing.allocator.free(file);
         var walker = try package_dir.walk(std.testing.allocator);
         defer walker.deinit();
         while (try walker.next()) |entry| {
@@ -2323,17 +2323,17 @@ const TestFetchBuilder = struct {
             std.mem.replaceScalar(u8, path, std.fs.path.sep, '/');
             try actual_files.append(std.testing.allocator, path);
         }
-        std.mem.sortUnstable([]u8, actual_files.items, {}, struct {
+        std.mem.sortUnstable([]u8, actual_files.slice(), {}, struct {
             fn lessThan(_: void, a: []u8, b: []u8) bool {
                 return std.mem.lessThan(u8, a, b);
             }
         }.lessThan);
 
-        try std.testing.expectEqual(expected_files.len, actual_files.items.len);
+        try std.testing.expectEqual(expected_files.len, actual_files.info.len);
         for (expected_files, 0..) |file_name, i| {
-            try std.testing.expectEqualStrings(file_name, actual_files.items[i]);
+            try std.testing.expectEqualStrings(file_name, actual_files.sliceConst()[i]);
         }
-        try std.testing.expectEqualDeep(expected_files, actual_files.items);
+        try std.testing.expectEqualDeep(expected_files, actual_files.sliceConst());
     }
 
     // Test helper, asserts that fetch has failed with `msg` error message.
@@ -2346,9 +2346,9 @@ const TestFetchBuilder = struct {
         if (notes_len > 0) {
             try std.testing.expectEqual(notes_len, em.notes_len);
         }
-        var al = std.ArrayList(u8).init(std.testing.allocator);
+        var al = std.ArrayListInline(u8).init(std.testing.allocator);
         defer al.deinit();
         try errors.renderToWriter(.{ .ttyconf = .no_color }, al.writer());
-        try std.testing.expectEqualStrings(msg, al.items);
+        try std.testing.expectEqualStrings(msg, al.sliceConst());
     }
 };

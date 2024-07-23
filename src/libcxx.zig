@@ -210,10 +210,10 @@ pub fn buildLibCXX(comp: *Compilation, prog_node: *std.Progress.Node) BuildError
         return error.SubCompilationFailed;
     };
 
-    var c_source_files = try std.ArrayList(Compilation.CSourceFile).initCapacity(arena, libcxx_files.len);
+    var c_source_files = try std.ArrayListInline(Compilation.CSourceFile).initCapacity(arena, libcxx_files.len);
 
     for (libcxx_files) |cxx_src| {
-        var cflags = std.ArrayList([]const u8).init(arena);
+        var cflags = std.ArrayListInline([]const u8).init(arena);
 
         if ((target.os.tag == .windows and target.abi == .msvc) or target.os.tag == .wasi) {
             // Filesystem stuff isn't supported on WASI and Windows (MSVC).
@@ -289,7 +289,7 @@ pub fn buildLibCXX(comp: *Compilation, prog_node: *std.Progress.Node) BuildError
         // These depend on only the zig lib directory file path, which is
         // purposefully either in the cache or not in the cache. The decision
         // should not be overridden here.
-        var cache_exempt_flags = std.ArrayList([]const u8).init(arena);
+        var cache_exempt_flags = std.ArrayListInline([]const u8).init(arena);
 
         try cache_exempt_flags.append("-I");
         try cache_exempt_flags.append(cxx_include_path);
@@ -457,10 +457,10 @@ pub fn buildLibCXXABI(comp: *Compilation, prog_node: *std.Progress.Node) BuildEr
         return error.SubCompilationFailed;
     };
 
-    var c_source_files = try std.ArrayList(Compilation.CSourceFile).initCapacity(arena, libcxxabi_files.len);
+    var c_source_files = try std.ArrayListInline(Compilation.CSourceFile).initCapacity(arena, libcxxabi_files.len);
 
     for (libcxxabi_files) |cxxabi_src| {
-        var cflags = std.ArrayList([]const u8).init(arena);
+        var cflags = std.ArrayListInline([]const u8).init(arena);
 
         if (target.os.tag == .wasi) {
             // WASI doesn't support exceptions yet.
@@ -519,7 +519,7 @@ pub fn buildLibCXXABI(comp: *Compilation, prog_node: *std.Progress.Node) BuildEr
         // These depend on only the zig lib directory file path, which is
         // purposefully either in the cache or not in the cache. The decision
         // should not be overridden here.
-        var cache_exempt_flags = std.ArrayList([]const u8).init(arena);
+        var cache_exempt_flags = std.ArrayListInline([]const u8).init(arena);
 
         try cache_exempt_flags.append("-I");
         try cache_exempt_flags.append(cxxabi_include_path);

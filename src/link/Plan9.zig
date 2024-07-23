@@ -419,7 +419,7 @@ pub fn updateFunc(self: *Plan9, mod: *Module, func_index: InternPool.Index, air:
 
     const atom_idx = try self.seeDecl(decl_index);
 
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
     var dbg_info_output: DebugInfoOutput = .{
         .dbg_line = std.ArrayList(u8).init(gpa),
@@ -465,7 +465,7 @@ pub fn updateFunc(self: *Plan9, mod: *Module, func_index: InternPool.Index, air:
 pub fn lowerUnnamedConst(self: *Plan9, val: Value, decl_index: InternPool.DeclIndex) !u32 {
     const gpa = self.base.comp.gpa;
     _ = try self.seeDecl(decl_index);
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     const mod = self.base.comp.module.?;
@@ -505,7 +505,7 @@ pub fn lowerUnnamedConst(self: *Plan9, val: Value, decl_index: InternPool.DeclIn
         .parent_atom_index = new_atom_idx,
     });
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| {
             decl.analysis = .codegen_failure;
             try mod.failed_decls.put(mod.gpa, decl_index, em);
@@ -534,7 +534,7 @@ pub fn updateDecl(self: *Plan9, mod: *Module, decl_index: InternPool.DeclIndex) 
     }
     const atom_idx = try self.seeDecl(decl_index);
 
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
     const decl_val = if (decl.val.getVariable(mod)) |variable| Value.fromInterned(variable.init) else decl.val;
     // TODO we need the symbol index for symbol in the table of locals for the containing atom
@@ -542,7 +542,7 @@ pub fn updateDecl(self: *Plan9, mod: *Module, decl_index: InternPool.DeclIndex) 
         .parent_atom_index = @as(Atom.Index, @intCast(atom_idx)),
     });
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| {
             decl.analysis = .codegen_failure;
             try mod.failed_decls.put(mod.gpa, decl_index, em);
@@ -1196,7 +1196,7 @@ fn updateLazySymbolAtom(self: *Plan9, sym: File.LazySymbol, atom_index: Atom.Ind
     const mod = self.base.comp.module.?;
 
     var required_alignment: InternPool.Alignment = .none;
-    var code_buffer = std.ArrayList(u8).init(gpa);
+    var code_buffer = std.ArrayListInline(u8).init(gpa);
     defer code_buffer.deinit();
 
     // create the symbol for the name
@@ -1231,7 +1231,7 @@ fn updateLazySymbolAtom(self: *Plan9, sym: File.LazySymbol, atom_index: Atom.Ind
         .{ .parent_atom_index = @as(Atom.Index, @intCast(atom_index)) },
     );
     const code = switch (res) {
-        .ok => code_buffer.items,
+        .ok => code_buffer.sliceConst(),
         .fail => |em| {
             log.err("{s}", .{em.msg});
             return error.CodegenFail;
@@ -1553,10 +1553,10 @@ pub fn lowerAnonDecl(
         const got_index = self.allocateGotIndex();
         gop.value_ptr.* = index;
         // we need to free name latex
-        var code_buffer = std.ArrayList(u8).init(gpa);
+        var code_buffer = std.ArrayListInline(u8).init(gpa);
         const res = try codegen.generateSymbol(&self.base, src_loc, val, &code_buffer, .{ .none = {} }, .{ .parent_atom_index = index });
         const code = switch (res) {
-            .ok => code_buffer.items,
+            .ok => code_buffer.sliceConst(),
             .fail => |em| return .{ .fail = em },
         };
         const atom_ptr = self.getAtomPtr(index);

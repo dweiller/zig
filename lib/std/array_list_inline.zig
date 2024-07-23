@@ -51,6 +51,13 @@ pub fn ArrayListInlineGrowth(
             return self.unmanaged.toOwnedSliceSentinel(self.allocator, sentinel);
         }
 
+        pub fn moveToUnmanaged(self: *Self) Unmanaged {
+            const allocator = self.allocator;
+            const result = self.unmanaged;
+            self.* = init(allocator);
+            return result;
+        }
+
         pub fn inlineStorage(self: *Self) void {
             self.unmanaged.inlineStorage();
         }
@@ -59,12 +66,44 @@ pub fn ArrayListInlineGrowth(
             return self.unmanaged.capacity();
         }
 
-        pub fn slice(self: Self) []T {
+        pub fn slice(self: *Self) []T {
             return self.unmanaged.slice();
+        }
+
+        pub fn sliceConst(self: *const Self) []const T {
+            return self.unmanaged.sliceConst();
         }
 
         pub fn clone(self: Self) Allocator.Error!Self {
             return self.unmanaged.clone(self.allocator);
+        }
+
+        pub fn insert(self: *Self, i: usize, item: T) Allocator.Error!void {
+            try self.unmanaged.insert(self.allocator, i, item);
+        }
+
+        pub fn insertAssumeCapacity(self: *Self, i: usize, item: T) void {
+            self.unmanaged.insertAssumeCapacity(i, item);
+        }
+
+        pub fn addManyAt(
+            self: *Self,
+            index: usize,
+            count: usize,
+        ) Allocator.Error![]T {
+            return self.unmanaged.addManyAt(self.allocator, index, count);
+        }
+
+        pub fn addManyAtAssumeCapacity(self: *Self, index: usize, count: usize) []T {
+            return self.unmanaged.addManyAtAssumeCapacity(index, count);
+        }
+
+        pub fn insertSlice(
+            self: *Self,
+            index: usize,
+            items: []const T,
+        ) Allocator.Error!void {
+            try self.unmanaged.insertSlice(self.allocator, index, items);
         }
 
         pub fn append(self: *Self, item: T) Allocator.Error!void {
@@ -77,6 +116,10 @@ pub fn ArrayListInlineGrowth(
 
         pub fn swapRemove(self: *Self, i: usize) T {
             return self.unmanaged.swapRemove(i);
+        }
+
+        pub fn orderedRemove(self: *Self, i: usize) T {
+            return self.unmanaged.orderedRemove(i);
         }
 
         pub fn appendSlice(
@@ -126,7 +169,7 @@ pub fn ArrayListInlineGrowth(
         }
 
         pub fn shrinkAndFree(self: *Self, new_len: usize) void {
-            try self.unmanaged.shrinkAndFree(self.allocator, new_len);
+            self.unmanaged.shrinkAndFree(self.allocator, new_len);
         }
 
         pub fn shrinkRetainingCapacity(self: *Self, new_len: usize) void {
@@ -170,7 +213,7 @@ pub fn ArrayListInlineGrowth(
             return self.unmanaged.addOne(self.allocator);
         }
 
-        pub fn addOneAssumeCapacity(self: *Self) Allocator.Error!*T {
+        pub fn addOneAssumeCapacity(self: *Self) *T {
             return self.unmanaged.addOneAssumeCapacity();
         }
 
@@ -205,7 +248,7 @@ pub fn ArrayListInlineGrowth(
             return self.unmanaged.allocatedSlice();
         }
 
-        pub fn unusedCapacitySlice(self: Self) []T {
+        pub fn unusedCapacitySlice(self: *Self) []T {
             return self.allocatedSlice()[self.info.len..];
         }
 
@@ -260,7 +303,11 @@ pub fn ArrayListInlineUnmanagedGrowth(
             if (self.info.is_small) {
                 return;
             }
-            allocator.free(self.items.large.ptr[0..self.items.large.len]);
+            allocator.free(self.items.large);
+        }
+
+        pub fn toManaged(self: *Self, allocator: Allocator) ArrayListInlineGrowth(T, small_size, growth) {
+            return .{ .unmanaged = self.*, .allocator = allocator };
         }
 
         pub fn toOwnedSlice(self: *Self, allocator: Allocator) Allocator.Error![]T {
@@ -291,7 +338,7 @@ pub fn ArrayListInlineUnmanagedGrowth(
 
         pub fn inlineStorage(self: *Self) void {
             if (self.info.len <= small_size and !self.info.is_small) {
-                @memcpy(self.items.small[0..self.info.len], self.items.large.ptr[0..self.info.len]);
+                @memcpy(self.items.small[0..self.info.len], self.items.large[0..self.info.len]);
             }
         }
 
@@ -299,7 +346,14 @@ pub fn ArrayListInlineUnmanagedGrowth(
             return if (self.info.is_small) small_size else self.items.large.len;
         }
 
-        pub fn slice(self: Self) []T {
+        pub fn slice(self: *Self) []T {
+            return if (self.info.is_small)
+                self.items.small[0..self.info.len]
+            else
+                self.items.large[0..self.info.len];
+        }
+
+        pub fn sliceConst(self: *const Self) []const T {
             return if (self.info.is_small)
                 self.items.small[0..self.info.len]
             else
@@ -311,11 +365,90 @@ pub fn ArrayListInlineUnmanagedGrowth(
                 return self;
             }
             const new_items = try allocator.alloc(T, self.items.large.len);
-            @memcpy(new_items[0..self.info.len], self.items.large.ptr[0..self.info.len]);
+            @memcpy(new_items[0..self.info.len], self.items.large[0..self.info.len]);
             return .{
                 .items = .{ .large = new_items },
                 .info = self.info,
             };
+        }
+
+        pub fn insert(self: *Self, allocator: Allocator, i: usize, item: T) Allocator.Error!void {
+            const dst = try self.addManyAt(allocator, i, 1);
+            dst[0] = item;
+        }
+
+        pub fn insertAssumeCapacity(self: *Self, i: usize, item: T) void {
+            assert(self.items.len < self.capacity);
+            self.items.len += 1;
+
+            const s = self.slice();
+            std.mem.copyBackwards(T, s[i + 1 .. self.items.len], s[i .. self.items.len - 1]);
+            s[i] = item;
+        }
+
+        pub fn addManyAt(
+            self: *Self,
+            allocator: Allocator,
+            index: usize,
+            count: usize,
+        ) Allocator.Error![]T {
+            const new_len = try addOrOom(self.info.len, @intCast(count));
+
+            if (self.capacity() >= new_len)
+                return self.addManyAtAssumeCapacity(index, count);
+
+            const new_capacity = growCapacity(self.capacity(), new_len);
+            if (self.info.is_small) {
+                assert(new_capacity > small_size);
+                const new_memory = try allocator.alloc(T, new_capacity);
+                const tail = self.items.small[index..];
+                @memcpy(new_memory[0..index], self.items.small[0..index]);
+                @memcpy(new_memory[index + count ..][0..tail.len], tail);
+                self.items.large = new_memory;
+                self.info.is_small = false;
+                self.info.len = new_len;
+                return self.items.large[index..][0..count];
+            }
+            const old_memory = self.allocatedSlice();
+            if (allocator.resize(old_memory, new_capacity)) {
+                self.items.large.len = new_capacity;
+                return addManyAtAssumeCapacity(self, index, count);
+            }
+
+            const new_memory = try allocator.alloc(T, new_capacity);
+            const to_move = self.items.large[index..];
+            @memcpy(new_memory[0..index], self.items.large[0..index]);
+            @memcpy(new_memory[index + count ..][0..to_move.len], to_move);
+            allocator.free(old_memory);
+            self.items.large = new_memory;
+            self.info.len = new_len;
+            return new_memory[index..][0..count];
+        }
+
+        pub fn addManyAtAssumeCapacity(self: *Self, index: usize, count: usize) []T {
+            const new_len = self.info.len + @as(SizeInt, @intCast(count));
+            assert(self.capacity() >= new_len);
+            const s = self.slice();
+            const to_move = s[index..];
+            self.info.len = new_len;
+            std.mem.copyBackwards(T, s[index + count ..], to_move);
+            const result = s[index..][0..count];
+            @memset(result, undefined);
+            return result;
+        }
+
+        pub fn insertSlice(
+            self: *Self,
+            allocator: Allocator,
+            index: usize,
+            items: []const T,
+        ) Allocator.Error!void {
+            const dst = try self.addManyAt(
+                allocator,
+                index,
+                items.len,
+            );
+            @memcpy(dst, items);
         }
 
         pub fn append(self: *Self, allocator: Allocator, item: T) Allocator.Error!void {
@@ -334,12 +467,28 @@ pub fn ArrayListInlineUnmanagedGrowth(
             self.info.len -= 1;
 
             if (self.info.is_small) {
-                const old_item = self.items.small[self.info.len];
-                self.items.small[i] = old_item;
+                const old_item = self.items.small[i];
+                self.items.small[i] = self.items.small[self.info.len];
                 return old_item;
             } else {
-                const old_item = self.items.large.ptr[self.info.len];
-                self.items.large.ptr[i] = old_item;
+                const old_item = self.items.large[i];
+                self.items.large[i] = self.items.large[self.info.len];
+                return old_item;
+            }
+        }
+
+        pub fn orderedRemove(self: *Self, i: usize) T {
+            assert(i < self.info.len);
+
+            self.info.len -= 1;
+
+            if (self.info.is_small) {
+                const old_item = self.items.small[i];
+                std.mem.copyForwards(T, self.items.small[i..self.info.len], self.items.small[i + 1 .. self.info.len + 1]);
+                return old_item;
+            } else {
+                const old_item = self.items.large[i];
+                std.mem.copyForwards(T, self.items.large[i..self.info.len], self.items.large[i + 1 .. self.info.len + 1]);
                 return old_item;
             }
         }
@@ -357,10 +506,10 @@ pub fn ArrayListInlineUnmanagedGrowth(
             const new_len = self.info.len + @as(SizeInt, @intCast(items.len));
             if (self.info.is_small) {
                 assert(new_len <= small_size);
-                @memcpy(self.items.small[self.info.len..][items.len], items);
+                @memcpy(self.items.small[self.info.len..][0..items.len], items);
             } else {
                 assert(new_len <= self.items.large.len);
-                @memcpy(self.items.large.ptr[self.info.len..][items.len], items);
+                @memcpy(self.items.large[self.info.len..][0..items.len], items);
             }
             self.info.len = new_len;
         }
@@ -543,7 +692,7 @@ pub fn ArrayListInlineUnmanagedGrowth(
             return self.addOneAssumeCapacity();
         }
 
-        pub fn addOneAssumeCapacity(self: *Self) Allocator.Error!*T {
+        pub fn addOneAssumeCapacity(self: *Self) *T {
             defer self.info.len += 1;
 
             if (self.info.is_small) {
@@ -604,7 +753,7 @@ pub fn ArrayListInlineUnmanagedGrowth(
             return self.items.large;
         }
 
-        pub fn unusedCapacitySlice(self: Self) []T {
+        pub fn unusedCapacitySlice(self: *Self) []T {
             return self.allocatedSlice()[self.info.len..];
         }
 

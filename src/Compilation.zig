@@ -98,8 +98,8 @@ win32_resource_table: if (build_options.only_core_functionality) void else std.A
     if (build_options.only_core_functionality) {} else .{},
 
 link_error_flags: link.File.ErrorFlags = .{},
-link_errors: std.ArrayListUnmanaged(link.File.ErrorMsg) = .{},
-lld_errors: std.ArrayListUnmanaged(LldError) = .{},
+link_errors: std.ArrayListInlineUnmanaged(link.File.ErrorMsg) = .{},
+lld_errors: std.ArrayListInlineUnmanaged(LldError) = .{},
 
 work_queue: std.fifo.LinearFifo(Job, .Dynamic),
 
@@ -411,7 +411,7 @@ pub const CObject = struct {
 
         pub fn addToErrorBundle(diag: Diag, eb: *ErrorBundle.Wip, bundle: Bundle, note: *u32) !void {
             const err_msg = try eb.addErrorMessage(try diag.toErrorMessage(eb, bundle, 0));
-            eb.extra.items[note.*] = @intFromEnum(err_msg);
+            eb.extra.slice()[note.*] = @intFromEnum(err_msg);
             note.* += 1;
             for (diag.sub_diags) |sub_diag| try sub_diag.addToErrorBundle(eb, bundle, note);
         }
@@ -502,13 +502,13 @@ pub const CObject = struct {
                     category: u32 = 0,
                     msg: []const u8 = &.{},
                     src_loc: SrcLoc = .{},
-                    src_ranges: std.ArrayListUnmanaged(SrcRange) = .{},
-                    sub_diags: std.ArrayListUnmanaged(Diag) = .{},
+                    src_ranges: std.ArrayListInlineUnmanaged(SrcRange) = .{},
+                    sub_diags: std.ArrayListInlineUnmanaged(Diag) = .{},
 
                     fn deinit(wip_diag: *@This(), allocator: Allocator) void {
                         allocator.free(wip_diag.msg);
                         wip_diag.src_ranges.deinit(allocator);
-                        for (wip_diag.sub_diags.items) |*sub_diag| sub_diag.deinit(allocator);
+                        for (wip_diag.sub_diags.slice()) |*sub_diag| sub_diag.deinit(allocator);
                         wip_diag.sub_diags.deinit(allocator);
                         wip_diag.* = undefined;
                     }
@@ -533,9 +533,9 @@ pub const CObject = struct {
                     category_names.deinit(gpa);
                 }
 
-                var stack: std.ArrayListUnmanaged(WipDiag) = .{};
+                var stack: std.ArrayListInlineUnmanaged(WipDiag) = .{};
                 defer {
-                    for (stack.items) |*wip_diag| wip_diag.deinit(gpa);
+                    for (stack.slice()) |*wip_diag| wip_diag.deinit(gpa);
                     stack.deinit(gpa);
                 }
                 try stack.append(gpa, .{});
@@ -543,14 +543,14 @@ pub const CObject = struct {
                 try bc.checkMagic("DIAG");
                 while (try bc.next()) |item| switch (item) {
                     .start_block => |block| switch (@as(BlockId, @enumFromInt(block.id))) {
-                        .Meta => if (stack.items.len > 0) try bc.skipBlock(block),
+                        .Meta => if (stack.info.len > 0) try bc.skipBlock(block),
                         .Diag => try stack.append(gpa, .{}),
                         _ => try bc.skipBlock(block),
                     },
                     .record => |record| switch (@as(RecordId, @enumFromInt(record.id))) {
                         .Version => if (record.operands[0] != 2) return error.InvalidVersion,
                         .DiagInfo => {
-                            const top = &stack.items[stack.items.len - 1];
+                            const top = &stack.slice()[stack.info.len - 1];
                             top.level = @intCast(record.operands[0]);
                             top.src_loc = .{
                                 .file = @intCast(record.operands[1]),
@@ -561,7 +561,7 @@ pub const CObject = struct {
                             top.category = @intCast(record.operands[5]);
                             top.msg = try gpa.dupe(u8, record.blob);
                         },
-                        .SrcRange => try stack.items[stack.items.len - 1].src_ranges.append(gpa, .{
+                        .SrcRange => try stack.slice()[stack.info.len - 1].src_ranges.append(gpa, .{
                             .start = .{
                                 .file = @intCast(record.operands[0]),
                                 .line = @intCast(record.operands[1]),
@@ -608,7 +608,7 @@ pub const CObject = struct {
                                 gpa.free(sub_diags);
                             }
 
-                            try stack.items[stack.items.len - 1].sub_diags.append(gpa, .{
+                            try stack.slice()[stack.info.len - 1].sub_diags.append(gpa, .{
                                 .level = wip_diag.level,
                                 .category = wip_diag.category,
                                 .msg = wip_diag.msg,
@@ -622,11 +622,11 @@ pub const CObject = struct {
                 };
 
                 const bundle = try gpa.create(Bundle);
-                assert(stack.items.len == 1);
+                assert(stack.info.len == 1);
                 bundle.* = .{
                     .file_names = file_names,
                     .category_names = category_names,
-                    .diags = try stack.items[0].sub_diags.toOwnedSlice(gpa),
+                    .diags = try stack.slice()[0].sub_diags.toOwnedSlice(gpa),
                 };
                 return bundle;
             }
@@ -1905,10 +1905,10 @@ pub fn destroy(comp: *Compilation) void {
         comp.failed_win32_resources.deinit(gpa);
     }
 
-    for (comp.link_errors.items) |*item| item.deinit(gpa);
+    for (comp.link_errors.slice()) |*item| item.deinit(gpa);
     comp.link_errors.deinit(gpa);
 
-    for (comp.lld_errors.items) |*lld_error| {
+    for (comp.lld_errors.slice()) |*lld_error| {
         lld_error.deinit(gpa);
     }
     comp.lld_errors.deinit(gpa);
@@ -2621,13 +2621,13 @@ fn reportMultiModuleErrors(mod: *Module) !void {
         const err = err_blk: {
             // Like with errors, let's cap the number of notes to prevent a huge error spew.
             const max_notes = 5;
-            const omitted = file.references.items.len -| max_notes;
-            const num_notes = file.references.items.len - omitted;
+            const omitted = file.references.info.len -| max_notes;
+            const num_notes = file.references.info.len - omitted;
 
             const notes = try mod.gpa.alloc(Module.ErrorMsg, if (omitted > 0) num_notes + 1 else num_notes);
             errdefer mod.gpa.free(notes);
 
-            for (notes[0..num_notes], file.references.items[0..num_notes], 0..) |*note, ref, i| {
+            for (notes[0..num_notes], file.references.slice()[0..num_notes], 0..) |*note, ref, i| {
                 errdefer for (notes[0..i]) |*n| n.deinit(mod.gpa);
                 note.* = switch (ref) {
                     .import => |loc| blk: {
@@ -2751,7 +2751,7 @@ pub fn saveState(comp: *Compilation) !void {
             .intern_pool = .{
                 .items_len = @intCast(ip.items.len),
                 .extra_len = @intCast(ip.extra.items.len),
-                .limbs_len = @intCast(ip.limbs.items.len),
+                .limbs_len = @intCast(ip.limbs.info.len),
                 .string_bytes_len = @intCast(ip.string_bytes.items.len),
                 .tracked_insts_len = @intCast(ip.tracked_insts.count()),
                 .src_hash_deps_len = @intCast(ip.src_hash_deps.count()),
@@ -2759,12 +2759,12 @@ pub fn saveState(comp: *Compilation) !void {
                 .namespace_deps_len = @intCast(ip.namespace_deps.count()),
                 .namespace_name_deps_len = @intCast(ip.namespace_name_deps.count()),
                 .first_dependency_len = @intCast(ip.first_dependency.count()),
-                .dep_entries_len = @intCast(ip.dep_entries.items.len),
-                .free_dep_entries_len = @intCast(ip.free_dep_entries.items.len),
+                .dep_entries_len = @intCast(ip.dep_entries.info.len),
+                .free_dep_entries_len = @intCast(ip.free_dep_entries.info.len),
             },
         };
         addBuf(&bufs_list, &bufs_len, mem.asBytes(&header));
-        addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.limbs.items));
+        addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.limbs.slice()));
         addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.extra.items));
         addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.items.items(.data)));
         addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.items.items(.tag)));
@@ -2782,8 +2782,8 @@ pub fn saveState(comp: *Compilation) !void {
 
         addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.first_dependency.keys()));
         addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.first_dependency.values()));
-        addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.dep_entries.items));
-        addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.free_dep_entries.items));
+        addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.dep_entries.slice()));
+        addBuf(&bufs_list, &bufs_len, mem.sliceAsBytes(ip.free_dep_entries.slice()));
 
         // TODO: compilation errors
         // TODO: files
@@ -2821,7 +2821,7 @@ pub fn totalErrorCount(comp: *Compilation) u32 {
     var total: usize =
         comp.misc_failures.count() +
         @intFromBool(comp.alloc_failure_occurred) +
-        comp.lld_errors.items.len;
+        comp.lld_errors.info.len;
 
     for (comp.failed_c_objects.values()) |bundle| {
         total += bundle.diags.len;
@@ -2880,7 +2880,7 @@ pub fn totalErrorCount(comp: *Compilation) u32 {
     }
     total += @intFromBool(comp.link_error_flags.missing_libc);
 
-    total += comp.link_errors.items.len;
+    total += comp.link_errors.info.len;
 
     // Compile log errors only count if there are no other errors.
     if (total == 0) {
@@ -2910,7 +2910,7 @@ pub fn getAllErrorsAlloc(comp: *Compilation) !ErrorBundle {
         }
     }
 
-    for (comp.lld_errors.items) |lld_error| {
+    for (comp.lld_errors.slice()) |lld_error| {
         const notes_len = @as(u32, @intCast(lld_error.context_lines.len));
 
         try bundle.addRootErrorMessage(.{
@@ -2919,7 +2919,7 @@ pub fn getAllErrorsAlloc(comp: *Compilation) !ErrorBundle {
         });
         const notes_start = try bundle.reserveNotes(notes_len);
         for (notes_start.., lld_error.context_lines) |note, context_line| {
-            bundle.extra.items[note] = @intFromEnum(bundle.addErrorMessageAssumeCapacity(.{
+            bundle.extra.slice()[note] = @intFromEnum(bundle.addErrorMessageAssumeCapacity(.{
                 .msg = try bundle.addString(context_line),
             }));
         }
@@ -2999,7 +2999,7 @@ pub fn getAllErrorsAlloc(comp: *Compilation) !ErrorBundle {
                 .notes_len = 1,
             });
             const notes_start = try bundle.reserveNotes(1);
-            bundle.extra.items[notes_start] = @intFromEnum(try bundle.addErrorMessage(.{
+            bundle.extra.slice()[notes_start] = @intFromEnum(try bundle.addErrorMessage(.{
                 .msg = try bundle.printString("use '--error-limit {d}' to increase limit", .{
                     actual_error_count,
                 }),
@@ -3007,7 +3007,7 @@ pub fn getAllErrorsAlloc(comp: *Compilation) !ErrorBundle {
         }
     }
 
-    if (bundle.root_list.items.len == 0) {
+    if (bundle.root_list.info.len == 0) {
         if (comp.link_error_flags.no_entry_point_found) {
             try bundle.addRootErrorMessage(.{
                 .msg = try bundle.addString("no entry point found"),
@@ -3021,29 +3021,29 @@ pub fn getAllErrorsAlloc(comp: *Compilation) !ErrorBundle {
             .notes_len = 2,
         });
         const notes_start = try bundle.reserveNotes(2);
-        bundle.extra.items[notes_start + 0] = @intFromEnum(try bundle.addErrorMessage(.{
+        bundle.extra.slice()[notes_start + 0] = @intFromEnum(try bundle.addErrorMessage(.{
             .msg = try bundle.addString("run 'zig libc -h' to learn about libc installations"),
         }));
-        bundle.extra.items[notes_start + 1] = @intFromEnum(try bundle.addErrorMessage(.{
+        bundle.extra.slice()[notes_start + 1] = @intFromEnum(try bundle.addErrorMessage(.{
             .msg = try bundle.addString("run 'zig targets' to see the targets for which zig can always provide libc"),
         }));
     }
 
-    for (comp.link_errors.items) |link_err| {
+    for (comp.link_errors.slice()) |link_err| {
         try bundle.addRootErrorMessage(.{
             .msg = try bundle.addString(link_err.msg),
             .notes_len = @intCast(link_err.notes.len),
         });
         const notes_start = try bundle.reserveNotes(@intCast(link_err.notes.len));
         for (link_err.notes, 0..) |note, i| {
-            bundle.extra.items[notes_start + i] = @intFromEnum(try bundle.addErrorMessage(.{
+            bundle.extra.slice()[notes_start + i] = @intFromEnum(try bundle.addErrorMessage(.{
                 .msg = try bundle.addString(note.msg),
             }));
         }
     }
 
     if (comp.module) |module| {
-        if (bundle.root_list.items.len == 0 and module.compile_log_decls.count() != 0) {
+        if (bundle.root_list.info.len == 0 and module.compile_log_decls.count() != 0) {
             const keys = module.compile_log_decls.keys();
             const values = module.compile_log_decls.values();
             // First one will be the error; subsequent ones will be notes.
@@ -3068,9 +3068,9 @@ pub fn getAllErrorsAlloc(comp: *Compilation) !ErrorBundle {
         }
     }
 
-    assert(comp.totalErrorCount() == bundle.root_list.items.len);
+    assert(comp.totalErrorCount() == bundle.root_list.info.len);
 
-    const compile_log_text = if (comp.module) |m| m.compile_log_text.items else "";
+    const compile_log_text = if (comp.module) |m| m.compile_log_text.slice() else "";
     return bundle.toOwnedBundle(compile_log_text);
 }
 
@@ -3138,7 +3138,7 @@ pub fn addModuleErrorMsg(mod: *Module, eb: *ErrorBundle.Wip, module_err_msg: Mod
     const file_path = try module_err_msg.src_loc.file_scope.fullPath(gpa);
     defer gpa.free(file_path);
 
-    var ref_traces: std.ArrayListUnmanaged(ErrorBundle.ReferenceTrace) = .{};
+    var ref_traces: std.ArrayListInlineUnmanaged(ErrorBundle.ReferenceTrace) = .{};
     defer ref_traces.deinit(gpa);
 
     const remaining_references: ?u32 = remaining: {
@@ -3186,10 +3186,10 @@ pub fn addModuleErrorMsg(mod: *Module, eb: *ErrorBundle.Wip, module_err_msg: Mod
             0
         else
             try eb.addString(err_loc.source_line),
-        .reference_trace_len = @intCast(ref_traces.items.len),
+        .reference_trace_len = @intCast(ref_traces.info.len),
     });
 
-    for (ref_traces.items) |rt| {
+    for (ref_traces.slice()) |rt| {
         try eb.addReferenceTrace(rt);
     }
 
@@ -3233,7 +3233,7 @@ pub fn addModuleErrorMsg(mod: *Module, eb: *ErrorBundle.Wip, module_err_msg: Mod
     const notes_start = try eb.reserveNotes(notes_len);
 
     for (notes_start.., notes.keys()) |i, note| {
-        eb.extra.items[i] = @intFromEnum(try eb.addErrorMessage(note));
+        eb.extra.slice()[i] = @intFromEnum(try eb.addErrorMessage(note));
     }
 }
 
@@ -3459,7 +3459,7 @@ fn processOneJob(comp: *Compilation, job: Job, prog_node: *std.Progress.Node) !v
                     };
                     defer {
                         fwd_decl.* = dg.fwd_decl.moveToUnmanaged();
-                        fwd_decl.shrinkAndFree(gpa, fwd_decl.items.len);
+                        fwd_decl.shrinkAndFree(gpa, fwd_decl.info.len);
                         dg.ctype_pool.deinit(gpa);
                         dg.scratch.deinit(gpa);
                     }
@@ -4157,7 +4157,7 @@ pub fn cImport(comp: *Compilation, c_src: []const u8, owner_mod: *Package.Module
             log.info("C import source: {s}", .{out_h_path});
         }
 
-        var argv = std.ArrayList([]const u8).init(comp.gpa);
+        var argv = std.ArrayListInline([]const u8).init(comp.gpa);
         defer argv.deinit();
 
         try argv.append(@tagName(comp.config.c_frontend)); // argv[0] is program name, actual args start at [1]
@@ -4166,7 +4166,7 @@ pub fn cImport(comp: *Compilation, c_src: []const u8, owner_mod: *Package.Module
         try argv.append(out_h_path);
 
         if (comp.verbose_cc) {
-            dump_argv(argv.items);
+            dump_argv(argv.slice());
         }
         var tree = switch (comp.config.c_frontend) {
             .aro => tree: {
@@ -4178,10 +4178,10 @@ pub fn cImport(comp: *Compilation, c_src: []const u8, owner_mod: *Package.Module
                 const translate_c = @import("translate_c.zig");
 
                 // Convert to null terminated args.
-                const new_argv_with_sentinel = try arena.alloc(?[*:0]const u8, argv.items.len + 1);
-                new_argv_with_sentinel[argv.items.len] = null;
-                const new_argv = new_argv_with_sentinel[0..argv.items.len :null];
-                for (argv.items, 0..) |arg, i| {
+                const new_argv_with_sentinel = try arena.alloc(?[*:0]const u8, argv.info.len + 1);
+                new_argv_with_sentinel[argv.info.len] = null;
+                const new_argv = new_argv_with_sentinel[0..argv.info.len :null];
+                for (argv.slice(), 0..) |arg, i| {
                     new_argv[i] = try arena.dupeZ(u8, arg);
                 }
 
@@ -4485,7 +4485,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: *std.P
     const target = comp.getTarget();
     const o_ext = target.ofmt.fileExt(target.cpu.arch);
     const digest = if (!comp.disable_c_depfile and try man.hit()) man.final() else blk: {
-        var argv = std.ArrayList([]const u8).init(comp.gpa);
+        var argv = std.ArrayListInline([]const u8).init(comp.gpa);
         defer argv.deinit();
 
         // In case we are doing passthrough mode, we need to detect -S and -emit-llvm.
@@ -4558,10 +4558,10 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: *std.P
             }
 
             if (comp.verbose_cc) {
-                dump_argv(argv.items);
+                dump_argv(argv.slice());
             }
 
-            const err = std.process.execv(arena, argv.items);
+            const err = std.process.execv(arena, argv.slice());
             fatal("unable to execv clang: {s}", .{@errorName(err)});
         }
 
@@ -4600,18 +4600,18 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: *std.P
         }
 
         if (comp.verbose_cc) {
-            dump_argv(argv.items);
+            dump_argv(argv.slice());
         }
 
         if (std.process.can_spawn) {
-            var child = std.ChildProcess.init(argv.items, arena);
+            var child = std.ChildProcess.init(argv.slice(), arena);
             if (comp.clang_passthrough_mode) {
                 child.stdin_behavior = .Inherit;
                 child.stdout_behavior = .Inherit;
                 child.stderr_behavior = .Inherit;
 
                 const term = child.spawnAndWait() catch |err| {
-                    return comp.failCObj(c_object, "unable to spawn {s}: {s}", .{ argv.items[0], @errorName(err) });
+                    return comp.failCObj(c_object, "unable to spawn {s}: {s}", .{ argv.slice()[0], @errorName(err) });
                 };
                 switch (term) {
                     .Exited => |code| {
@@ -4633,7 +4633,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: *std.P
                 const stderr = try child.stderr.?.reader().readAllAlloc(arena, std.math.maxInt(usize));
 
                 const term = child.wait() catch |err| {
-                    return comp.failCObj(c_object, "unable to spawn {s}: {s}", .{ argv.items[0], @errorName(err) });
+                    return comp.failCObj(c_object, "unable to spawn {s}: {s}", .{ argv.slice()[0], @errorName(err) });
                 };
 
                 switch (term) {
@@ -4656,7 +4656,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: *std.P
                 }
             }
         } else {
-            const exit_code = try clangMain(arena, argv.items);
+            const exit_code = try clangMain(arena, argv.slice());
             if (exit_code != 0) {
                 if (comp.clang_passthrough_mode) {
                     std.process.exit(exit_code);
@@ -4813,7 +4813,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
             const input = try std.fmt.allocPrint(arena, "1 24 \"{s}\"", .{fmtRcEscape(src_path)});
             try o_dir.writeFile(.{ .sub_path = rc_basename, .data = input });
 
-            var argv = std.ArrayList([]const u8).init(comp.gpa);
+            var argv = std.ArrayListInline([]const u8).init(comp.gpa);
             defer argv.deinit();
 
             try argv.appendSlice(&.{
@@ -4828,7 +4828,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
             });
             try argv.appendSlice(&.{ "--", in_rc_path, out_res_path });
 
-            try spawnZigRc(comp, win32_resource, src_basename, arena, argv.items, &child_progress_node);
+            try spawnZigRc(comp, win32_resource, src_basename, arena, argv.slice(), &child_progress_node);
 
             break :blk digest;
         };
@@ -4868,7 +4868,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
         // so we need a temporary filename.
         const out_res_path = try comp.tmpFilePath(arena, res_filename);
 
-        var argv = std.ArrayList([]const u8).init(comp.gpa);
+        var argv = std.ArrayListInline([]const u8).init(comp.gpa);
         defer argv.deinit();
 
         const depfile_filename = try std.fmt.allocPrint(arena, "{s}.d.json", .{rc_basename_noext});
@@ -4896,7 +4896,7 @@ fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32
         try argv.appendSlice(rc_src.extra_flags);
         try argv.appendSlice(&.{ "--", rc_src.src_path, out_res_path });
 
-        try spawnZigRc(comp, win32_resource, src_basename, arena, argv.items, &child_progress_node);
+        try spawnZigRc(comp, win32_resource, src_basename, arena, argv.slice(), &child_progress_node);
 
         // Read depfile and update cache manifest
         {
@@ -4970,7 +4970,7 @@ fn spawnZigRc(
     argv: []const []const u8,
     child_progress_node: *std.Progress.Node,
 ) !void {
-    var node_name: std.ArrayListUnmanaged(u8) = .{};
+    var node_name: std.ArrayListInlineUnmanaged(u8) = .{};
     defer node_name.deinit(arena);
 
     var child = std.ChildProcess.init(argv, arena);
@@ -5031,7 +5031,7 @@ fn spawnZigRc(
                 else if (body.len > 0) {
                     try node_name.appendSlice(arena, "build 'zig rc'... ");
                     try node_name.appendSlice(arena, body);
-                    child_progress_node.setName(node_name.items);
+                    child_progress_node.setName(node_name.slice());
                 }
             },
             else => {}, // ignore other messages
@@ -5075,7 +5075,7 @@ pub fn tmpFilePath(comp: Compilation, ally: Allocator, suffix: []const u8) error
 pub fn addTranslateCCArgs(
     comp: *Compilation,
     arena: Allocator,
-    argv: *std.ArrayList([]const u8),
+    argv: *std.ArrayListInline([]const u8),
     ext: FileExt,
     out_dep_path: ?[]const u8,
     owner_mod: *Package.Module,
@@ -5090,7 +5090,7 @@ pub fn addTranslateCCArgs(
 pub fn addCCArgs(
     comp: *const Compilation,
     arena: Allocator,
-    argv: *std.ArrayList([]const u8),
+    argv: *std.ArrayListInline([]const u8),
     ext: FileExt,
     out_dep_path: ?[]const u8,
     mod: *Package.Module,
@@ -5868,7 +5868,7 @@ pub fn lockAndSetMiscFailure(
 }
 
 fn parseLldStderr(comp: *Compilation, prefix: []const u8, stderr: []const u8) Allocator.Error!void {
-    var context_lines = std.ArrayList([]const u8).init(comp.gpa);
+    var context_lines = std.ArrayListInline([]const u8).init(comp.gpa);
     defer context_lines.deinit();
 
     var current_err: ?*LldError = null;

@@ -6,7 +6,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const ArrayListInlineUnmanaged = std.ArrayListInlineUnmanaged;
 const assert = std.debug.assert;
 const log = std.log.scoped(.module);
 const BigIntConst = std.math.big.int.Const;
@@ -75,14 +75,14 @@ local_zir_cache: Compilation.Directory,
 /// map of Decl indexes to details about them being exported.
 /// The Export memory is owned by the `export_owners` table; the slice itself
 /// is owned by this table. The slice is guaranteed to not be empty.
-decl_exports: std.AutoArrayHashMapUnmanaged(Decl.Index, ArrayListUnmanaged(*Export)) = .{},
+decl_exports: std.AutoArrayHashMapUnmanaged(Decl.Index, ArrayListInlineUnmanaged(*Export)) = .{},
 /// Same as `decl_exports` but for exported constant values.
-value_exports: std.AutoArrayHashMapUnmanaged(InternPool.Index, ArrayListUnmanaged(*Export)) = .{},
+value_exports: std.AutoArrayHashMapUnmanaged(InternPool.Index, ArrayListInlineUnmanaged(*Export)) = .{},
 /// This models the Decls that perform exports, so that `decl_exports` can be updated when a Decl
 /// is modified. Note that the key of this table is not the Decl being exported, but the Decl that
 /// is performing the export of another Decl.
 /// This table owns the Export memory.
-export_owners: std.AutoArrayHashMapUnmanaged(Decl.Index, ArrayListUnmanaged(*Export)) = .{},
+export_owners: std.AutoArrayHashMapUnmanaged(Decl.Index, ArrayListInlineUnmanaged(*Export)) = .{},
 /// The set of all the Zig source files in the Module. We keep track of this in order
 /// to iterate over it and check which source files have been modified on the file system when
 /// an update is requested, as well as to cache `@import` results.
@@ -146,7 +146,7 @@ outdated_file_root: std.AutoArrayHashMapUnmanaged(Decl.Index, void) = .{},
 /// failure was something like running out of disk space, and trying again may
 /// succeed. On the next update, we will flush this list, marking all members of
 /// it as outdated.
-retryable_failures: std.ArrayListUnmanaged(InternPool.Depender) = .{},
+retryable_failures: std.ArrayListInlineUnmanaged(InternPool.Depender) = .{},
 
 stage1_flags: packed struct {
     have_winmain: bool = false,
@@ -158,7 +158,7 @@ stage1_flags: packed struct {
     reserved: u2 = 0,
 } = .{},
 
-compile_log_text: ArrayListUnmanaged(u8) = .{},
+compile_log_text: ArrayListInlineUnmanaged(u8) = .{},
 
 emit_h: ?*GlobalEmitH,
 
@@ -665,7 +665,7 @@ pub const Decl = struct {
 
 /// This state is attached to every Decl when Module emit_h is non-null.
 pub const EmitH = struct {
-    fwd_decl: ArrayListUnmanaged(u8) = .{},
+    fwd_decl: ArrayListInlineUnmanaged(u8) = .{},
 };
 
 pub const DeclAdapter = struct {
@@ -833,7 +833,7 @@ pub const File = struct {
     /// Whether this file is a part of multiple packages. This is an error condition which will be reported after AstGen.
     multi_pkg: bool = false,
     /// List of references to this file, used for multi-package errors.
-    references: std.ArrayListUnmanaged(Reference) = .{},
+    references: std.ArrayListInlineUnmanaged(Reference) = .{},
     /// The hash of the path to this file, used to store `InternPool.TrackedInst`.
     /// undefined until `zir_loaded == true`.
     path_digest: Cache.BinDigest = undefined,
@@ -1005,7 +1005,7 @@ pub const File = struct {
         // Don't add the same module root twice. Note that since we always add module roots at the
         // front of the references array (see below), this loop is actually O(1) on valid code.
         if (ref == .root) {
-            for (file.references.items) |other| {
+            for (file.references.sliceConst()) |other| {
                 switch (other) {
                     .root => |r| if (ref.root == r) return,
                     else => break, // reached the end of the "is-root" references
@@ -2080,8 +2080,8 @@ pub fn declIsRoot(mod: *Module, decl_index: Decl.Index) bool {
     return decl_index == namespace.decl_index;
 }
 
-fn freeExportList(gpa: Allocator, export_list: *ArrayListUnmanaged(*Export)) void {
-    for (export_list.items) |exp| gpa.destroy(exp);
+fn freeExportList(gpa: Allocator, export_list: *ArrayListInlineUnmanaged(*Export)) void {
+    for (export_list.sliceConst()) |exp| gpa.destroy(exp);
     export_list.deinit(gpa);
 }
 
@@ -2782,7 +2782,7 @@ pub fn findOutdatedToAnalyze(zcu: *Zcu) Allocator.Error!?InternPool.Depender {
 /// `retryable_failures` and mark them as outdated so they get re-analyzed.
 pub fn flushRetryableFailures(zcu: *Zcu) !void {
     const gpa = zcu.gpa;
-    for (zcu.retryable_failures.items) |depender| {
+    for (zcu.retryable_failures.slice()) |depender| {
         if (zcu.outdated.contains(depender)) continue;
         if (zcu.potentially_outdated.fetchSwapRemove(depender)) |kv| {
             // This Depender was already PO, but we now consider it outdated.
@@ -2810,7 +2810,7 @@ pub fn mapOldZirToNew(
         old_inst: Zir.Inst.Index,
         new_inst: Zir.Inst.Index,
     };
-    var match_stack: ArrayListUnmanaged(MatchedZirDecl) = .{};
+    var match_stack: ArrayListInlineUnmanaged(MatchedZirDecl) = .{};
     defer match_stack.deinit(gpa);
 
     // Main struct inst is always matched
@@ -2820,9 +2820,9 @@ pub fn mapOldZirToNew(
     });
 
     // Used as temporary buffers for namespace declaration instructions
-    var old_decls = std.ArrayList(Zir.Inst.Index).init(gpa);
+    var old_decls = std.ArrayListInline(Zir.Inst.Index).init(gpa);
     defer old_decls.deinit();
-    var new_decls = std.ArrayList(Zir.Inst.Index).init(gpa);
+    var new_decls = std.ArrayListInline(Zir.Inst.Index).init(gpa);
     defer new_decls.deinit();
 
     while (match_stack.popOrNull()) |match_item| {
@@ -2836,13 +2836,13 @@ pub fn mapOldZirToNew(
         var named_tests: std.StringHashMapUnmanaged(Zir.Inst.Index) = .{};
         defer named_tests.deinit(gpa);
         // All unnamed tests, in order, for a best-effort match.
-        var unnamed_tests: std.ArrayListUnmanaged(Zir.Inst.Index) = .{};
+        var unnamed_tests: std.ArrayListInlineUnmanaged(Zir.Inst.Index) = .{};
         defer unnamed_tests.deinit(gpa);
         // All comptime declarations, in order, for a best-effort match.
-        var comptime_decls: std.ArrayListUnmanaged(Zir.Inst.Index) = .{};
+        var comptime_decls: std.ArrayListInlineUnmanaged(Zir.Inst.Index) = .{};
         defer comptime_decls.deinit(gpa);
         // All usingnamespace declarations, in order, for a best-effort match.
-        var usingnamespace_decls: std.ArrayListUnmanaged(Zir.Inst.Index) = .{};
+        var usingnamespace_decls: std.ArrayListInlineUnmanaged(Zir.Inst.Index) = .{};
         defer usingnamespace_decls.deinit(gpa);
 
         {
@@ -2882,19 +2882,19 @@ pub fn mapOldZirToNew(
             // If we cannot match this declaration, we can't match anything nested inside of it either, so we just `continue`.
             const old_decl_inst = switch (new_decl.name) {
                 .@"comptime" => inst: {
-                    if (comptime_decl_idx == comptime_decls.items.len) continue;
+                    if (comptime_decl_idx == comptime_decls.info.len) continue;
                     defer comptime_decl_idx += 1;
-                    break :inst comptime_decls.items[comptime_decl_idx];
+                    break :inst comptime_decls.slice()[comptime_decl_idx];
                 },
                 .@"usingnamespace" => inst: {
-                    if (usingnamespace_decl_idx == usingnamespace_decls.items.len) continue;
+                    if (usingnamespace_decl_idx == usingnamespace_decls.info.len) continue;
                     defer usingnamespace_decl_idx += 1;
-                    break :inst usingnamespace_decls.items[usingnamespace_decl_idx];
+                    break :inst usingnamespace_decls.slice()[usingnamespace_decl_idx];
                 },
                 .unnamed_test, .decltest => inst: {
-                    if (unnamed_test_idx == unnamed_tests.items.len) continue;
+                    if (unnamed_test_idx == unnamed_tests.info.len) continue;
                     defer unnamed_test_idx += 1;
-                    break :inst unnamed_tests.items[unnamed_test_idx];
+                    break :inst unnamed_tests.slice()[unnamed_test_idx];
                 },
                 _ => inst: {
                     const name_nts = new_decl.name.toString(old_zir).?;
@@ -2916,9 +2916,9 @@ pub fn mapOldZirToNew(
 
             // We don't have any smart way of matching up these namespace declarations, so we always
             // correlate them based on source order.
-            const n = @min(old_decls.items.len, new_decls.items.len);
+            const n = @min(old_decls.unmanaged.info.len, new_decls.unmanaged.info.len);
             try match_stack.ensureUnusedCapacity(gpa, n);
-            for (old_decls.items[0..n], new_decls.items[0..n]) |old_inst, new_inst| {
+            for (old_decls.slice()[0..n], new_decls.slice()[0..n]) |old_inst, new_inst| {
                 match_stack.appendAssumeCapacity(.{ .old_inst = old_inst, .new_inst = new_inst });
             }
         }
@@ -3607,7 +3607,7 @@ fn semaDecl(mod: *Module, decl_index: Decl.Index) !SemaDeclResult {
     var analysis_arena = std.heap.ArenaAllocator.init(gpa);
     defer analysis_arena.deinit();
 
-    var comptime_err_ret_trace = std.ArrayList(SrcLoc).init(gpa);
+    var comptime_err_ret_trace = std.ArrayListInline(SrcLoc).init(gpa);
     defer comptime_err_ret_trace.deinit();
 
     var sema: Sema = .{
@@ -4431,12 +4431,12 @@ pub fn finalizeAnonDecl(mod: *Module, decl_index: Decl.Index) Allocator.Error!vo
 fn deleteDeclExports(mod: *Module, decl_index: Decl.Index) Allocator.Error!void {
     var export_owners = (mod.export_owners.fetchSwapRemove(decl_index) orelse return).value;
 
-    for (export_owners.items) |exp| {
+    for (export_owners.slice()) |exp| {
         switch (exp.exported) {
             .decl_index => |exported_decl_index| {
                 if (mod.decl_exports.getPtr(exported_decl_index)) |export_list| {
                     // Remove exports with owner_decl matching the regenerating decl.
-                    const list = export_list.items;
+                    const list = export_list.slice();
                     var i: usize = 0;
                     var new_len = list.len;
                     while (i < new_len) {
@@ -4456,7 +4456,7 @@ fn deleteDeclExports(mod: *Module, decl_index: Decl.Index) Allocator.Error!void 
             .value => |value| {
                 if (mod.value_exports.getPtr(value)) |export_list| {
                     // Remove exports with owner_decl matching the regenerating decl.
-                    const list = export_list.items;
+                    const list = export_list.slice();
                     var i: usize = 0;
                     var new_len = list.len;
                     while (i < new_len) {
@@ -4502,7 +4502,7 @@ pub fn analyzeFnBody(mod: *Module, func_index: InternPool.Index, arena: Allocato
 
     mod.intern_pool.removeDependenciesForDepender(gpa, InternPool.Depender.wrap(.{ .func = func_index }));
 
-    var comptime_err_ret_trace = std.ArrayList(SrcLoc).init(gpa);
+    var comptime_err_ret_trace = std.ArrayListInline(SrcLoc).init(gpa);
     defer comptime_err_ret_trace.deinit();
 
     // In the case of a generic function instance, this is the type of the
@@ -4547,7 +4547,7 @@ pub fn analyzeFnBody(mod: *Module, func_index: InternPool.Index, arena: Allocato
     // First few indexes of extra are reserved and set at the end.
     const reserved_count = @typeInfo(Air.ExtraIndex).Enum.fields.len;
     try sema.air_extra.ensureTotalCapacity(gpa, reserved_count);
-    sema.air_extra.items.len += reserved_count;
+    sema.air_extra.info.len += @intCast(reserved_count);
 
     var inner_block: Sema.Block = .{
         .parent = null,
@@ -4622,7 +4622,7 @@ pub fn analyzeFnBody(mod: *Module, func_index: InternPool.Index, arena: Allocato
 
     func.analysis(ip).state = .in_progress;
 
-    const last_arg_index = inner_block.instructions.items.len;
+    const last_arg_index = inner_block.instructions.info.len;
 
     // Save the error trace as our first action in the function.
     // If this is unnecessary after all, Liveness will clean it up for us.
@@ -4664,12 +4664,12 @@ pub fn analyzeFnBody(mod: *Module, func_index: InternPool.Index, arena: Allocato
 
     // Copy the block into place and mark that as the main block.
     try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.Block).Struct.fields.len +
-        inner_block.instructions.items.len);
+        inner_block.instructions.info.len);
     const main_block_index = sema.addExtraAssumeCapacity(Air.Block{
-        .body_len = @intCast(inner_block.instructions.items.len),
+        .body_len = @intCast(inner_block.instructions.info.len),
     });
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(inner_block.instructions.items));
-    sema.air_extra.items[@intFromEnum(Air.ExtraIndex.main_block)] = main_block_index;
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(inner_block.instructions.slice()));
+    sema.air_extra.slice()[@intFromEnum(Air.ExtraIndex.main_block)] = main_block_index;
 
     // Resolving inferred error sets is done *before* setting the function
     // state to success, so that "unable to resolve inferred error set" errors
@@ -5247,12 +5247,12 @@ pub fn processExports(mod: *Module) !void {
 
     for (mod.decl_exports.keys(), mod.decl_exports.values()) |exported_decl, exports_list| {
         const exported: Exported = .{ .decl_index = exported_decl };
-        try processExportsInner(mod, &symbol_exports, exported, exports_list.items);
+        try processExportsInner(mod, &symbol_exports, exported, exports_list.sliceConst());
     }
 
     for (mod.value_exports.keys(), mod.value_exports.values()) |exported_value, exports_list| {
         const exported: Exported = .{ .value = exported_value };
-        try processExportsInner(mod, &symbol_exports, exported, exports_list.items);
+        try processExportsInner(mod, &symbol_exports, exported, exports_list.sliceConst());
     }
 }
 
@@ -5524,7 +5524,7 @@ pub fn addGlobalAssembly(mod: *Module, decl_index: Decl.Index, source: []const u
 
 pub fn getDeclExports(mod: Module, decl_index: Decl.Index) []const *Export {
     if (mod.decl_exports.get(decl_index)) |l| {
-        return l.items;
+        return l.sliceConst();
     } else {
         return &[0]*Export{};
     }

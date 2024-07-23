@@ -89,8 +89,8 @@ pub fn detect(
 }
 
 fn detectFromInstallation(arena: Allocator, target: std.Target, lci: *const LibCInstallation) !LibCDirs {
-    var list = try std.ArrayList([]const u8).initCapacity(arena, 5);
-    var framework_list = std.ArrayList([]const u8).init(arena);
+    var list = try std.ArrayListInline([]const u8).initCapacity(arena, 5);
+    var framework_list = std.ArrayListInline([]const u8).init(arena);
 
     list.appendAssumeCapacity(lci.include_dir.?);
 
@@ -135,9 +135,9 @@ fn detectFromInstallation(arena: Allocator, target: std.Target, lci: *const LibC
     }
 
     return .{
-        .libc_include_dir_list = list.items,
+        .libc_include_dir_list = list.slice(),
         .libc_installation = lci,
-        .libc_framework_dir_list = framework_list.items,
+        .libc_framework_dir_list = framework_list.slice(),
         .sysroot = sysroot,
         .darwin_sdk_layout = if (sysroot == null) null else .sdk,
     };

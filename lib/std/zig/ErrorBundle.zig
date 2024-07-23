@@ -310,10 +310,10 @@ const assert = std.debug.assert;
 
 pub const Wip = struct {
     gpa: Allocator,
-    string_bytes: std.ArrayListUnmanaged(u8),
+    string_bytes: std.ArrayListInlineUnmanaged(u8),
     /// The first thing in this array is a ErrorMessageList.
-    extra: std.ArrayListUnmanaged(u32),
-    root_list: std.ArrayListUnmanaged(MessageIndex),
+    extra: std.ArrayListInlineUnmanaged(u32),
+    root_list: std.ArrayListInlineUnmanaged(MessageIndex),
 
     pub fn init(wip: *Wip, gpa: Allocator) !void {
         wip.* = .{
@@ -343,7 +343,7 @@ pub const Wip = struct {
 
     pub fn toOwnedBundle(wip: *Wip, compile_log_text: []const u8) !ErrorBundle {
         const gpa = wip.gpa;
-        if (wip.root_list.items.len == 0) {
+        if (wip.root_list.info.len == 0) {
             assert(compile_log_text.len == 0);
             // Special encoding when there are no errors.
             wip.deinit();
@@ -357,7 +357,7 @@ pub const Wip = struct {
         }
 
         const compile_log_str_index = if (compile_log_text.len == 0) 0 else str: {
-            const str: u32 = @intCast(wip.string_bytes.items.len);
+            const str: u32 = @intCast(wip.string_bytes.info.len);
             try wip.string_bytes.ensureUnusedCapacity(gpa, compile_log_text.len + 1);
             wip.string_bytes.appendSliceAssumeCapacity(compile_log_text);
             wip.string_bytes.appendAssumeCapacity(0);
@@ -365,11 +365,11 @@ pub const Wip = struct {
         };
 
         wip.setExtra(0, ErrorMessageList{
-            .len = @intCast(wip.root_list.items.len),
-            .start = @intCast(wip.extra.items.len),
+            .len = @intCast(wip.root_list.info.len),
+            .start = @intCast(wip.extra.info.len),
             .compile_log_text = compile_log_str_index,
         });
-        try wip.extra.appendSlice(gpa, @as([]const u32, @ptrCast(wip.root_list.items)));
+        try wip.extra.appendSlice(gpa, @as([]const u32, @ptrCast(wip.root_list.sliceConst())));
         wip.root_list.clearAndFree(gpa);
         return .{
             .string_bytes = try wip.string_bytes.toOwnedSlice(gpa),
@@ -379,14 +379,14 @@ pub const Wip = struct {
 
     pub fn tmpBundle(wip: Wip) ErrorBundle {
         return .{
-            .string_bytes = wip.string_bytes.items,
-            .extra = wip.extra.items,
+            .string_bytes = wip.string_bytes.sliceConst(),
+            .extra = wip.extra.sliceConst(),
         };
     }
 
     pub fn addString(wip: *Wip, s: []const u8) Allocator.Error!u32 {
         const gpa = wip.gpa;
-        const index: u32 = @intCast(wip.string_bytes.items.len);
+        const index: u32 = @intCast(wip.string_bytes.info.len);
         try wip.string_bytes.ensureUnusedCapacity(gpa, s.len + 1);
         wip.string_bytes.appendSliceAssumeCapacity(s);
         wip.string_bytes.appendAssumeCapacity(0);
@@ -395,7 +395,7 @@ pub const Wip = struct {
 
     pub fn printString(wip: *Wip, comptime fmt: []const u8, args: anytype) Allocator.Error!u32 {
         const gpa = wip.gpa;
-        const index: u32 = @intCast(wip.string_bytes.items.len);
+        const index: u32 = @intCast(wip.string_bytes.info.len);
         try wip.string_bytes.writer(gpa).print(fmt, args);
         try wip.string_bytes.append(gpa, 0);
         return index;
@@ -435,7 +435,7 @@ pub const Wip = struct {
         for (notes_start.., other_list) |note, message| {
             // This line can cause `wip.extra.items` to be resized.
             const note_index = @intFromEnum(wip.addOtherMessage(other, message) catch unreachable);
-            wip.extra.items[note] = note_index;
+            wip.extra.slice()[note] = note_index;
         }
     }
 
@@ -457,8 +457,8 @@ pub const Wip = struct {
     pub fn reserveNotes(wip: *Wip, notes_len: u32) !u32 {
         try wip.extra.ensureUnusedCapacity(wip.gpa, notes_len +
             notes_len * @typeInfo(ErrorBundle.ErrorMessage).Struct.fields.len);
-        wip.extra.items.len += notes_len;
-        return @intCast(wip.extra.items.len - notes_len);
+        wip.extra.info.len += notes_len;
+        return @intCast(wip.extra.info.len - notes_len);
     }
 
     pub fn addZirErrorMessages(
@@ -541,7 +541,7 @@ pub const Wip = struct {
                         }),
                         .notes_len = 0, // TODO rework this function to be recursive
                     }));
-                    eb.extra.items[note_i] = note_index;
+                    eb.extra.slice()[note_i] = note_index;
                 }
             }
         }
@@ -558,7 +558,7 @@ pub const Wip = struct {
         });
         const notes_start = try wip.reserveNotes(other_msg.notes_len);
         for (notes_start.., other.getNotes(msg_index)) |note, other_note| {
-            wip.extra.items[note] = @intFromEnum(try wip.addOtherMessage(other, other_note));
+            wip.extra.slice()[note] = @intFromEnum(try wip.addOtherMessage(other, other_note));
         }
         return msg;
     }
@@ -571,7 +571,7 @@ pub const Wip = struct {
         if (index == .none) return .none;
         const other_sl = other.getSourceLocation(index);
 
-        var ref_traces: std.ArrayListUnmanaged(ReferenceTrace) = .{};
+        var ref_traces: std.ArrayListInlineUnmanaged(ReferenceTrace) = .{};
         defer ref_traces.deinit(wip.gpa);
 
         if (other_sl.reference_trace_len > 0) {
@@ -607,7 +607,7 @@ pub const Wip = struct {
             .reference_trace_len = other_sl.reference_trace_len,
         });
 
-        for (ref_traces.items) |ref_trace| {
+        for (ref_traces.sliceConst()) |ref_trace| {
             try wip.addReferenceTrace(ref_trace);
         }
 
@@ -623,8 +623,8 @@ pub const Wip = struct {
 
     fn addExtraAssumeCapacity(wip: *Wip, extra: anytype) u32 {
         const fields = @typeInfo(@TypeOf(extra)).Struct.fields;
-        const result: u32 = @intCast(wip.extra.items.len);
-        wip.extra.items.len += fields.len;
+        const result: u32 = @intCast(wip.extra.info.len);
+        wip.extra.info.len += @intCast(fields.len);
         setExtra(wip, result, extra);
         return result;
     }
@@ -633,7 +633,7 @@ pub const Wip = struct {
         const fields = @typeInfo(@TypeOf(extra)).Struct.fields;
         var i = index;
         inline for (fields) |field| {
-            wip.extra.items[i] = switch (field.type) {
+            wip.extra.slice()[i] = switch (field.type) {
                 u32 => @field(extra, field.name),
                 MessageIndex => @intFromEnum(@field(extra, field.name)),
                 SourceLocationIndex => @intFromEnum(@field(extra, field.name)),
@@ -705,7 +705,7 @@ pub const Wip = struct {
                     .source_line = try wip.addString("another line of source"),
                 }),
             }));
-            wip.extra.items[i] = note_index;
+            wip.extra.slice()[i] = note_index;
 
             break :bundle try wip.toOwnedBundle("");
         };
@@ -713,7 +713,7 @@ pub const Wip = struct {
 
         const ttyconf: std.io.tty.Config = .no_color;
 
-        var bundle_buf = std.ArrayList(u8).init(std.testing.allocator);
+        var bundle_buf = std.ArrayListInline(u8).init(std.testing.allocator);
         defer bundle_buf.deinit();
         try bundle.renderToWriter(.{ .ttyconf = ttyconf }, bundle_buf.writer());
 
@@ -728,10 +728,10 @@ pub const Wip = struct {
         };
         defer copy.deinit(std.testing.allocator);
 
-        var copy_buf = std.ArrayList(u8).init(std.testing.allocator);
+        var copy_buf = std.ArrayListInline(u8).init(std.testing.allocator);
         defer copy_buf.deinit();
         try copy.renderToWriter(.{ .ttyconf = ttyconf }, copy_buf.writer());
 
-        try std.testing.expectEqualStrings(bundle_buf.items, copy_buf.items);
+        try std.testing.expectEqualStrings(bundle_buf.sliceConst(), copy_buf.sliceConst());
     }
 };

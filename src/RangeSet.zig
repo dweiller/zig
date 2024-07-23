@@ -9,7 +9,7 @@ const Module = @import("Module.zig");
 const RangeSet = @This();
 const SwitchProngSrc = @import("Module.zig").SwitchProngSrc;
 
-ranges: std.ArrayList(Range),
+ranges: std.ArrayListInline(Range),
 module: *Module,
 
 pub const Range = struct {
@@ -20,7 +20,7 @@ pub const Range = struct {
 
 pub fn init(allocator: std.mem.Allocator, module: *Module) RangeSet {
     return .{
-        .ranges = std.ArrayList(Range).init(allocator),
+        .ranges = std.ArrayListInline(Range).init(allocator),
         .module = module,
     };
 }
@@ -41,7 +41,7 @@ pub fn add(
     const ty = ip.typeOf(first);
     assert(ty == ip.typeOf(last));
 
-    for (self.ranges.items) |range| {
+    for (self.ranges.sliceConst()) |range| {
         assert(ty == ip.typeOf(range.first));
         assert(ty == ip.typeOf(range.last));
 
@@ -71,13 +71,13 @@ pub fn spans(self: *RangeSet, first: InternPool.Index, last: InternPool.Index) !
     const ip = &mod.intern_pool;
     assert(ip.typeOf(first) == ip.typeOf(last));
 
-    if (self.ranges.items.len == 0)
+    if (self.ranges.unmanaged.info.len == 0)
         return false;
 
-    std.mem.sort(Range, self.ranges.items, mod, lessThan);
+    std.mem.sort(Range, self.ranges.slice(), mod, lessThan);
 
-    if (self.ranges.items[0].first != first or
-        self.ranges.items[self.ranges.items.len - 1].last != last)
+    if (self.ranges.sliceConst()[0].first != first or
+        self.ranges.sliceConst()[self.ranges.unmanaged.info.len - 1].last != last)
     {
         return false;
     }
@@ -88,9 +88,9 @@ pub fn spans(self: *RangeSet, first: InternPool.Index, last: InternPool.Index) !
     defer counter.deinit();
 
     // look for gaps
-    for (self.ranges.items[1..], 0..) |cur, i| {
+    for (self.ranges.sliceConst()[1..], 0..) |cur, i| {
         // i starts counting from the second item.
-        const prev = self.ranges.items[i];
+        const prev = self.ranges.sliceConst()[i];
 
         // prev.last + 1 == cur.first
         try counter.copy(Value.fromInterned(prev.last).toBigInt(&space, mod));

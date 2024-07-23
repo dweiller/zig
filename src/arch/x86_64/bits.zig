@@ -3,7 +3,7 @@ const assert = std.debug.assert;
 const expect = std.testing.expect;
 
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
+const ArrayListInline = std.ArrayListInline;
 const DW = std.dwarf;
 
 /// EFLAGS condition codes

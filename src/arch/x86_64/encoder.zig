@@ -1111,7 +1111,7 @@ const TestEncode = struct {
 };
 
 test "encode" {
-    var buf = std.ArrayList(u8).init(testing.allocator);
+    var buf = std.ArrayListInline(u8).init(testing.allocator);
     defer buf.deinit();
 
     const inst = try Instruction.new(.none, .mov, &.{
@@ -2546,7 +2546,7 @@ test "assemble" {
     // zig fmt: on
 
     var as = Assembler.init(input);
-    var output = std.ArrayList(u8).init(testing.allocator);
+    var output = std.ArrayListInline(u8).init(testing.allocator);
     defer output.deinit();
     try as.assemble(output.writer());
     try expectEqualHexStrings(expected, output.items, input);
@@ -2590,7 +2590,7 @@ test "assemble - Jcc" {
         const input = @tagName(mnemonic[0]) ++ " 0x0";
         const expected = [_]u8{ 0x0f, mnemonic[1], 0x0, 0x0, 0x0, 0x0 };
         var as = Assembler.init(input);
-        var output = std.ArrayList(u8).init(testing.allocator);
+        var output = std.ArrayListInline(u8).init(testing.allocator);
         defer output.deinit();
         try as.assemble(output.writer());
         try expectEqualHexStrings(&expected, output.items, input);
@@ -2635,7 +2635,7 @@ test "assemble - SETcc" {
         const input = @tagName(mnemonic[0]) ++ " al";
         const expected = [_]u8{ 0x0f, mnemonic[1], 0xC0 };
         var as = Assembler.init(input);
-        var output = std.ArrayList(u8).init(testing.allocator);
+        var output = std.ArrayListInline(u8).init(testing.allocator);
         defer output.deinit();
         try as.assemble(output.writer());
         try expectEqualHexStrings(&expected, output.items, input);
@@ -2680,7 +2680,7 @@ test "assemble - CMOVcc" {
         const input = @tagName(mnemonic[0]) ++ " rax, rbx";
         const expected = [_]u8{ 0x48, 0x0f, mnemonic[1], 0xC3 };
         var as = Assembler.init(input);
-        var output = std.ArrayList(u8).init(testing.allocator);
+        var output = std.ArrayListInline(u8).init(testing.allocator);
         defer output.deinit();
         try as.assemble(output.writer());
         try expectEqualHexStrings(&expected, output.items, input);

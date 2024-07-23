@@ -104,7 +104,7 @@ pub fn parse(gpa: Allocator, ast: Ast, options: ParseOptions) Error!Manifest {
     defer p.paths.deinit(gpa);
 
     p.parseRoot(main_node_index) catch |err| switch (err) {
-        error.ParseFailure => assert(p.errors.items.len > 0),
+        error.ParseFailure => assert(p.errors.info.len > 0),
         else => |e| return e,
     };
 
@@ -116,7 +116,7 @@ pub fn parse(gpa: Allocator, ast: Ast, options: ParseOptions) Error!Manifest {
         .dependencies_node = p.dependencies_node,
         .paths = try p.paths.clone(p.arena),
         .minimum_zig_version = p.minimum_zig_version,
-        .errors = try p.arena.dupe(ErrorMessage, p.errors.items),
+        .errors = try p.arena.dupe(ErrorMessage, p.errors.sliceConst()),
         .arena_state = arena_instance.state,
     };
 }
@@ -191,8 +191,8 @@ const Parse = struct {
     gpa: Allocator,
     ast: Ast,
     arena: Allocator,
-    buf: std.ArrayListUnmanaged(u8),
-    errors: std.ArrayListUnmanaged(ErrorMessage),
+    buf: std.ArrayListInlineUnmanaged(u8),
+    errors: std.ArrayListInlineUnmanaged(ErrorMessage),
 
     name: []const u8,
     version: std.SemanticVersion,
@@ -413,7 +413,7 @@ const Parse = struct {
         const token_bytes = ast.tokenSlice(str_lit_token);
         p.buf.clearRetainingCapacity();
         try parseStrLit(p, str_lit_token, &p.buf, token_bytes, 0);
-        const duped = try p.arena.dupe(u8, p.buf.items);
+        const duped = try p.arena.dupe(u8, p.buf.sliceConst());
         return duped;
     }
 
@@ -454,7 +454,7 @@ const Parse = struct {
         }
         p.buf.clearRetainingCapacity();
         try parseStrLit(p, token, &p.buf, ident_name, 1);
-        const duped = try p.arena.dupe(u8, p.buf.items);
+        const duped = try p.arena.dupe(u8, p.buf.sliceConst());
         return duped;
     }
 
@@ -462,7 +462,7 @@ const Parse = struct {
     fn parseStrLit(
         p: *Parse,
         token: Ast.TokenIndex,
-        buf: *std.ArrayListUnmanaged(u8),
+        buf: *std.ArrayListInlineUnmanaged(u8),
         bytes: []const u8,
         offset: u32,
     ) InnerError!void {

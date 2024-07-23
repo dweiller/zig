@@ -41,16 +41,16 @@ aligned_anon_decls: std.AutoArrayHashMapUnmanaged(InternPool.Index, Alignment) =
 
 /// Optimization, `updateDecl` reuses this buffer rather than creating a new
 /// one with every call.
-fwd_decl_buf: std.ArrayListUnmanaged(u8) = .{},
+fwd_decl_buf: std.ArrayListInlineUnmanaged(u8) = .{},
 /// Optimization, `updateDecl` reuses this buffer rather than creating a new
 /// one with every call.
-code_buf: std.ArrayListUnmanaged(u8) = .{},
+code_buf: std.ArrayListInlineUnmanaged(u8) = .{},
 /// Optimization, `flush` reuses this buffer rather than creating a new
 /// one with every call.
-lazy_fwd_decl_buf: std.ArrayListUnmanaged(u8) = .{},
+lazy_fwd_decl_buf: std.ArrayListInlineUnmanaged(u8) = .{},
 /// Optimization, `flush` reuses this buffer rather than creating a new
 /// one with every call.
-lazy_code_buf: std.ArrayListUnmanaged(u8) = .{},
+lazy_code_buf: std.ArrayListInlineUnmanaged(u8) = .{},
 
 /// A reference into `string_bytes`.
 const String = extern struct {
@@ -245,8 +245,8 @@ pub fn updateFunc(
         },
         else => |e| return e,
     };
-    gop.value_ptr.fwd_decl = try self.addString(function.object.dg.fwd_decl.items);
-    gop.value_ptr.code = try self.addString(function.object.code.items);
+    gop.value_ptr.fwd_decl = try self.addString(function.object.dg.fwd_decl.sliceConst());
+    gop.value_ptr.code = try self.addString(function.object.code.sliceConst());
 }
 
 fn updateAnonDecl(self: *C, zcu: *Zcu, i: usize) !void {
@@ -299,8 +299,8 @@ fn updateAnonDecl(self: *C, zcu: *Zcu, i: usize) !void {
 
     object.dg.ctype_pool.freeUnusedCapacity(gpa);
     object.dg.anon_decl_deps.values()[i] = .{
-        .code = try self.addString(object.code.items),
-        .fwd_decl = try self.addString(object.dg.fwd_decl.items),
+        .code = try self.addString(object.code.sliceConst()),
+        .fwd_decl = try self.addString(object.dg.fwd_decl.sliceConst()),
         .ctype_pool = object.dg.ctype_pool.move(),
     };
 }
@@ -358,8 +358,8 @@ pub fn updateDecl(self: *C, zcu: *Zcu, decl_index: InternPool.DeclIndex) !void {
         },
         else => |e| return e,
     };
-    gop.value_ptr.code = try self.addString(object.code.items);
-    gop.value_ptr.fwd_decl = try self.addString(object.dg.fwd_decl.items);
+    gop.value_ptr.code = try self.addString(object.code.sliceConst());
+    gop.value_ptr.fwd_decl = try self.addString(object.dg.fwd_decl.sliceConst());
 }
 
 pub fn updateDeclLineNumber(self: *C, zcu: *Zcu, decl_index: InternPool.DeclIndex) !void {
@@ -453,7 +453,7 @@ pub fn flushModule(self: *C, arena: Allocator, prog_node: *std.Progress.Node) !v
         var export_names: std.AutoHashMapUnmanaged(InternPool.NullTerminatedString, void) = .{};
         defer export_names.deinit(gpa);
         try export_names.ensureTotalCapacity(gpa, @intCast(zcu.decl_exports.entries.len));
-        for (zcu.decl_exports.values()) |exports| for (exports.items) |@"export"|
+        for (zcu.decl_exports.values()) |exports| for (exports.sliceConst()) |@"export"|
             try export_names.put(gpa, @"export".opts.name, {});
 
         for (self.anon_decls.values()) |*decl_block| {
@@ -490,9 +490,9 @@ pub fn flushModule(self: *C, arena: Allocator, prog_node: *std.Progress.Node) !v
     };
     f.file_size += f.ctypes_buf.items.len;
 
-    const lazy_fwd_decl_len = self.lazy_fwd_decl_buf.items.len;
+    const lazy_fwd_decl_len = self.lazy_fwd_decl_buf.info.len;
     f.all_buffers.items[lazy_index] = .{
-        .base = if (lazy_fwd_decl_len > 0) self.lazy_fwd_decl_buf.items.ptr else "",
+        .base = if (lazy_fwd_decl_len > 0) self.lazy_fwd_decl_buf.sliceConst().ptr else "",
         .len = lazy_fwd_decl_len,
     };
     f.file_size += lazy_fwd_decl_len;
@@ -501,7 +501,7 @@ pub fn flushModule(self: *C, arena: Allocator, prog_node: *std.Progress.Node) !v
     const anon_decl_values = self.anon_decls.values();
     const decl_values = self.decl_table.values();
     try f.all_buffers.ensureUnusedCapacity(gpa, 1 + anon_decl_values.len + decl_values.len);
-    f.appendBufAssumeCapacity(self.lazy_code_buf.items);
+    f.appendBufAssumeCapacity(self.lazy_code_buf.sliceConst());
     for (anon_decl_values) |db| f.appendBufAssumeCapacity(self.getString(db.code));
     for (decl_values) |db| f.appendBufAssumeCapacity(self.getString(db.code));
 
@@ -743,7 +743,7 @@ pub fn flushEmitH(zcu: *Zcu) !void {
 
     // We collect a list of buffers to write, and write them all at once with pwritev 😎
     const num_buffers = emit_h.decl_table.count() + 1;
-    var all_buffers = try std.ArrayList(std.posix.iovec_const).initCapacity(zcu.gpa, num_buffers);
+    var all_buffers = try std.ArrayListInline(std.posix.iovec_const).initCapacity(zcu.gpa, num_buffers);
     defer all_buffers.deinit();
 
     var file_size: u64 = zig_h.len;
@@ -756,7 +756,7 @@ pub fn flushEmitH(zcu: *Zcu) !void {
 
     for (emit_h.decl_table.keys()) |decl_index| {
         const decl_emit_h = emit_h.declPtr(decl_index);
-        const buf = decl_emit_h.fwd_decl.items;
+        const buf = decl_emit_h.fwd_decl.sliceConst();
         if (buf.len != 0) {
             all_buffers.appendAssumeCapacity(.{
                 .base = buf.ptr,
@@ -775,7 +775,7 @@ pub fn flushEmitH(zcu: *Zcu) !void {
     defer file.close();
 
     try file.setEndPos(file_size);
-    try file.pwritevAll(all_buffers.items, 0);
+    try file.pwritevAll(all_buffers.slice(), 0);
 }
 
 pub fn updateExports(

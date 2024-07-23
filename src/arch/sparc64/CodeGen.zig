@@ -55,7 +55,7 @@ liveness: Liveness,
 bin_file: *link.File,
 target: *const std.Target,
 func_index: InternPool.Index,
-code: *std.ArrayList(u8),
+code: *std.ArrayListInline(u8),
 debug_output: DebugInfoOutput,
 err_msg: ?*ErrorMsg,
 args: []MCValue,
@@ -68,7 +68,7 @@ stack_align: Alignment,
 /// MIR Instructions
 mir_instructions: std.MultiArrayList(Mir.Inst) = .{},
 /// MIR extra data
-mir_extra: std.ArrayListUnmanaged(u32) = .{},
+mir_extra: std.ArrayListInlineUnmanaged(u32) = .{},
 
 /// Byte offset within the source file of the ending curly.
 end_di_line: u32,
@@ -77,7 +77,7 @@ end_di_column: u32,
 /// The value is an offset into the `Function` `code` from the beginning.
 /// To perform the reloc, write 32-bit signed little-endian integer
 /// which is a relative jump, based on the address following the reloc.
-exitlude_jump_relocs: std.ArrayListUnmanaged(usize) = .{},
+exitlude_jump_relocs: std.ArrayListInlineUnmanaged(usize) = .{},
 
 /// Whenever there is a runtime branch, we push a Branch onto this stack,
 /// and pop it off when the runtime branch joins. This provides an "overlay"
@@ -86,7 +86,7 @@ exitlude_jump_relocs: std.ArrayListUnmanaged(usize) = .{},
 /// within different branches. Special consideration is needed when a branch
 /// joins with its parent, to make sure all instructions have the same MCValue
 /// across each runtime branch upon joining.
-branch_stack: *std.ArrayList(Branch),
+branch_stack: *std.ArrayListInline(Branch),
 
 // Key is the block instruction
 blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, BlockData) = .{},
@@ -216,7 +216,7 @@ const StackAllocation = struct {
 };
 
 const BlockData = struct {
-    relocs: std.ArrayListUnmanaged(Mir.Inst.Index),
+    relocs: std.ArrayListInlineUnmanaged(Mir.Inst.Index),
     /// The first break instruction encounters `null` here and chooses a
     /// machine code value for the block result, populating this field.
     /// Following break instructions encounter that value and use it for
@@ -265,7 +265,7 @@ pub fn generate(
     func_index: InternPool.Index,
     air: Air,
     liveness: Liveness,
-    code: *std.ArrayList(u8),
+    code: *std.ArrayListInline(u8),
     debug_output: DebugInfoOutput,
 ) CodeGenError!Result {
     const gpa = lf.comp.gpa;
@@ -277,7 +277,7 @@ pub fn generate(
     const namespace = zcu.namespacePtr(fn_owner_decl.src_namespace);
     const target = &namespace.file_scope.mod.resolved_target.result;
 
-    var branch_stack = std.ArrayList(Branch).init(gpa);
+    var branch_stack = std.ArrayListInline(Branch).init(gpa);
     defer {
         assert(branch_stack.items.len == 1);
         branch_stack.items[0].deinit(gpa);

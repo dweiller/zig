@@ -250,7 +250,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, args: FindNativeOptions) F
 
     const dev_null = if (is_windows) "nul" else "/dev/null";
 
-    var argv = std.ArrayList([]const u8).init(allocator);
+    var argv = std.ArrayListInline([]const u8).init(allocator);
     defer argv.deinit();
 
     try appendCcExe(&argv, skip_cc_env_var);
@@ -263,7 +263,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, args: FindNativeOptions) F
 
     const run_res = std.ChildProcess.run(.{
         .allocator = allocator,
-        .argv = argv.items,
+        .argv = argv.slice(),
         .max_output_bytes = 1024 * 1024,
         .env_map = &env_map,
         // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
@@ -274,7 +274,7 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, args: FindNativeOptions) F
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            printVerboseInvocation(argv.items, null, args.verbose, null);
+            printVerboseInvocation(argv.slice(), null, args.verbose, null);
             return error.UnableToSpawnCCompiler;
         },
     };
@@ -284,24 +284,24 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, args: FindNativeOptions) F
     }
     switch (run_res.term) {
         .Exited => |code| if (code != 0) {
-            printVerboseInvocation(argv.items, null, args.verbose, run_res.stderr);
+            printVerboseInvocation(argv.slice(), null, args.verbose, run_res.stderr);
             return error.CCompilerExitCode;
         },
         else => {
-            printVerboseInvocation(argv.items, null, args.verbose, run_res.stderr);
+            printVerboseInvocation(argv.slice(), null, args.verbose, run_res.stderr);
             return error.CCompilerCrashed;
         },
     }
 
     var it = std.mem.tokenizeAny(u8, run_res.stderr, "\n\r");
-    var search_paths = std.ArrayList([]const u8).init(allocator);
+    var search_paths = std.ArrayListInline([]const u8).init(allocator);
     defer search_paths.deinit();
     while (it.next()) |line| {
         if (line.len != 0 and line[0] == ' ') {
             try search_paths.append(line);
         }
     }
-    if (search_paths.items.len == 0) {
+    if (search_paths.slice().len == 0) {
         return error.CCompilerCannotFindHeaders;
     }
 
@@ -314,9 +314,9 @@ fn findNativeIncludeDirPosix(self: *LibCInstallation, args: FindNativeOptions) F
         "sys/errno.h";
 
     var path_i: usize = 0;
-    while (path_i < search_paths.items.len) : (path_i += 1) {
+    while (path_i < search_paths.slice().len) : (path_i += 1) {
         // search in reverse order
-        const search_path_untrimmed = search_paths.items[search_paths.items.len - path_i - 1];
+        const search_path_untrimmed = search_paths.slice()[search_paths.slice().len - path_i - 1];
         const search_path = std.mem.trimLeft(u8, search_path_untrimmed, " ");
         var search_dir = fs.cwd().openDir(search_path, .{}) catch |err| switch (err) {
             error.FileNotFound,
@@ -365,14 +365,14 @@ fn findNativeIncludeDirWindows(
     var install_buf: [2]std.zig.WindowsSdk.Installation = undefined;
     const installs = fillInstallations(&install_buf, sdk);
 
-    var result_buf = std.ArrayList(u8).init(allocator);
+    var result_buf = std.ArrayListInline(u8).init(allocator);
     defer result_buf.deinit();
 
     for (installs) |install| {
         result_buf.shrinkAndFree(0);
         try result_buf.writer().print("{s}\\Include\\{s}\\ucrt", .{ install.path, install.version });
 
-        var dir = fs.cwd().openDir(result_buf.items, .{}) catch |err| switch (err) {
+        var dir = fs.cwd().openDir(result_buf.slice(), .{}) catch |err| switch (err) {
             error.FileNotFound,
             error.NotDir,
             error.NoDevice,
@@ -404,7 +404,7 @@ fn findNativeCrtDirWindows(
     var install_buf: [2]std.zig.WindowsSdk.Installation = undefined;
     const installs = fillInstallations(&install_buf, sdk);
 
-    var result_buf = std.ArrayList(u8).init(allocator);
+    var result_buf = std.ArrayListInline(u8).init(allocator);
     defer result_buf.deinit();
 
     const arch_sub_dir = switch (builtin.target.cpu.arch) {
@@ -419,7 +419,7 @@ fn findNativeCrtDirWindows(
         result_buf.shrinkAndFree(0);
         try result_buf.writer().print("{s}\\Lib\\{s}\\ucrt\\{s}", .{ install.path, install.version, arch_sub_dir });
 
-        var dir = fs.cwd().openDir(result_buf.items, .{}) catch |err| switch (err) {
+        var dir = fs.cwd().openDir(result_buf.slice(), .{}) catch |err| switch (err) {
             error.FileNotFound,
             error.NotDir,
             error.NoDevice,
@@ -471,7 +471,7 @@ fn findNativeKernel32LibDir(
     var install_buf: [2]std.zig.WindowsSdk.Installation = undefined;
     const installs = fillInstallations(&install_buf, sdk);
 
-    var result_buf = std.ArrayList(u8).init(allocator);
+    var result_buf = std.ArrayListInline(u8).init(allocator);
     defer result_buf.deinit();
 
     const arch_sub_dir = switch (builtin.target.cpu.arch) {
@@ -487,7 +487,7 @@ fn findNativeKernel32LibDir(
         const stream = result_buf.writer();
         try stream.print("{s}\\Lib\\{s}\\um\\{s}", .{ install.path, install.version, arch_sub_dir });
 
-        var dir = fs.cwd().openDir(result_buf.items, .{}) catch |err| switch (err) {
+        var dir = fs.cwd().openDir(result_buf.slice(), .{}) catch |err| switch (err) {
             error.FileNotFound,
             error.NotDir,
             error.NoDevice,
@@ -579,7 +579,7 @@ fn ccPrintFileName(args: CCPrintFileNameOptions) ![:0]u8 {
         break :blk false;
     };
 
-    var argv = std.ArrayList([]const u8).init(allocator);
+    var argv = std.ArrayListInline([]const u8).init(allocator);
     defer argv.deinit();
 
     const arg1 = try std.fmt.allocPrint(allocator, "-print-file-name={s}", .{args.search_basename});
@@ -590,7 +590,7 @@ fn ccPrintFileName(args: CCPrintFileNameOptions) ![:0]u8 {
 
     const run_res = std.ChildProcess.run(.{
         .allocator = allocator,
-        .argv = argv.items,
+        .argv = argv.slice(),
         .max_output_bytes = 1024 * 1024,
         .env_map = &env_map,
         // Some C compilers, such as Clang, are known to rely on argv[0] to find the path
@@ -608,11 +608,11 @@ fn ccPrintFileName(args: CCPrintFileNameOptions) ![:0]u8 {
     }
     switch (run_res.term) {
         .Exited => |code| if (code != 0) {
-            printVerboseInvocation(argv.items, args.search_basename, args.verbose, run_res.stderr);
+            printVerboseInvocation(argv.slice(), args.search_basename, args.verbose, run_res.stderr);
             return error.CCompilerExitCode;
         },
         else => {
-            printVerboseInvocation(argv.items, args.search_basename, args.verbose, run_res.stderr);
+            printVerboseInvocation(argv.slice(), args.search_basename, args.verbose, run_res.stderr);
             return error.CCompilerCrashed;
         },
     }
@@ -672,7 +672,7 @@ fn fillInstallations(
 
 const inf_loop_env_key = "ZIG_IS_DETECTING_LIBC_PATHS";
 
-fn appendCcExe(args: *std.ArrayList([]const u8), skip_cc_env_var: bool) !void {
+fn appendCcExe(args: *std.ArrayListInline([]const u8), skip_cc_env_var: bool) !void {
     const default_cc_exe = if (is_windows) "cc.exe" else "cc";
     try args.ensureUnusedCapacity(1);
     if (skip_cc_env_var) {

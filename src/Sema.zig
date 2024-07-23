@@ -13,7 +13,7 @@ gpa: Allocator,
 arena: Allocator,
 code: Zir,
 air_instructions: std.MultiArrayList(Air.Inst) = .{},
-air_extra: std.ArrayListUnmanaged(u32) = .{},
+air_extra: std.ArrayListInlineUnmanaged(u32) = .{},
 /// Maps ZIR to AIR.
 inst_map: InstMap = .{},
 /// When analyzing an inline function call, owner_decl is the Decl of the caller
@@ -34,7 +34,7 @@ func_index: InternPool.Index,
 func_is_naked: bool,
 /// Used to restore the error return trace when returning a non-error from a function.
 error_return_trace_index_on_fn_entry: Air.Inst.Ref = .none,
-comptime_err_ret_trace: *std.ArrayList(Module.SrcLoc),
+comptime_err_ret_trace: *std.ArrayListInline(Module.SrcLoc),
 /// When semantic analysis needs to know the return type of the function whose body
 /// is being analyzed, this `Type` should be used instead of going through `func`.
 /// This will correctly handle the case of a comptime/inline function call of a
@@ -119,7 +119,7 @@ maybe_comptime_allocs: std.AutoHashMapUnmanaged(Air.Inst.Index, MaybeComptimeAll
 /// stored as elements of this array.
 /// Pointers to such memory are represented via an index into this array.
 /// Backed by gpa.
-comptime_allocs: std.ArrayListUnmanaged(ComptimeAlloc) = .{},
+comptime_allocs: std.ArrayListInlineUnmanaged(ComptimeAlloc) = .{},
 
 const MaybeComptimeAlloc = struct {
     /// The runtime index of the `alloc` instruction.
@@ -148,7 +148,7 @@ const ComptimeAlloc = struct {
 };
 
 fn newComptimeAlloc(sema: *Sema, block: *Block, ty: Type, alignment: Alignment) !ComptimeAllocIndex {
-    const idx = sema.comptime_allocs.items.len;
+    const idx = sema.comptime_allocs.info.len;
     try sema.comptime_allocs.append(sema.gpa, .{
         .val = .{ .interned = try sema.mod.intern(.{ .undef = ty.toIntern() }) },
         .is_const = false,
@@ -159,7 +159,7 @@ fn newComptimeAlloc(sema: *Sema, block: *Block, ty: Type, alignment: Alignment) 
 }
 
 pub fn getComptimeAlloc(sema: *Sema, idx: ComptimeAllocIndex) *ComptimeAlloc {
-    return &sema.comptime_allocs.items[@intFromEnum(idx)];
+    return &sema.comptime_allocs.slice()[@intFromEnum(idx)];
 }
 
 const std = @import("std");
@@ -348,7 +348,7 @@ pub const Block = struct {
     /// When analyzing fields, this is different from src_decl.src_namespace.
     namespace: InternPool.NamespaceIndex,
     /// The AIR instructions generated for this block.
-    instructions: std.ArrayListUnmanaged(Air.Inst.Index),
+    instructions: std.ArrayListInlineUnmanaged(Air.Inst.Index),
     // `param` instructions are collected here to be used by the `func` instruction.
     /// When doing a generic function instantiation, this array collects a type
     /// for each *runtime-known* parameter. This array corresponds to the instance
@@ -387,7 +387,7 @@ pub const Block = struct {
     /// What mode to generate float operations in, set by @setFloatMode
     float_mode: std.builtin.FloatMode = .strict,
 
-    c_import_buf: ?*std.ArrayList(u8) = null,
+    c_import_buf: ?*std.ArrayListInline(u8) = null,
 
     /// If not `null`, this boolean is set when a `dbg_var_ptr` or `dbg_var_val`
     /// instruction is emitted. It signals that the innermost lexically
@@ -471,15 +471,15 @@ pub const Block = struct {
         block_inst: Air.Inst.Index,
         /// Separate array list from break_inst_list so that it can be passed directly
         /// to resolvePeerTypes.
-        results: std.ArrayListUnmanaged(Air.Inst.Ref),
+        results: std.ArrayListInlineUnmanaged(Air.Inst.Ref),
         /// Keeps track of the break instructions so that the operand can be replaced
         /// if we need to add type coercion at the end of block analysis.
         /// Same indexes, capacity, length as `results`.
-        br_list: std.ArrayListUnmanaged(Air.Inst.Index),
+        br_list: std.ArrayListInlineUnmanaged(Air.Inst.Index),
         /// Keeps the source location of the rhs operand of the break instruction,
         /// to enable more precise compile errors.
         /// Same indexes, capacity, length as `results`.
-        src_locs: std.ArrayListUnmanaged(?LazySrcLoc),
+        src_locs: std.ArrayListInlineUnmanaged(?LazySrcLoc),
 
         pub fn deinit(merges: *@This(), allocator: mem.Allocator) void {
             merges.results.deinit(allocator);
@@ -737,7 +737,7 @@ pub const Block = struct {
         const sema = block.sema;
         const ty_ref = Air.internedToRef(aggregate_ty.toIntern());
         try sema.air_extra.ensureUnusedCapacity(sema.gpa, elements.len);
-        const extra_index: u32 = @intCast(sema.air_extra.items.len);
+        const extra_index: u32 = @intCast(sema.air_extra.info.len);
         sema.appendRefsAssumeCapacity(elements);
 
         return block.addInst(.{
@@ -837,7 +837,7 @@ const InferredAlloc = struct {
     /// is known. These should be rewritten to perform any required coercions
     /// when the type is resolved.
     /// Allocated from `sema.arena`.
-    prongs: std.ArrayListUnmanaged(Air.Inst.Index) = .{},
+    prongs: std.ArrayListInlineUnmanaged(Air.Inst.Index) = .{},
 };
 
 const NeededComptimeReason = struct {
@@ -1585,7 +1585,7 @@ fn analyzeBodyInner(
                 // However, in the case of a corresponding break_inline which reaches
                 // through a runtime conditional branch, we must retroactively emit
                 // a block, so we remember the block index here just in case.
-                const block_index = block.instructions.items.len;
+                const block_index = block.instructions.info.len;
                 const inst_data = datas[@intFromEnum(inst)].pl_node;
                 const extra = sema.code.extraData(Zir.Inst.Block, inst_data.payload_index);
                 const inline_body = sema.code.bodySlice(extra.end, extra.data.body_len);
@@ -1666,8 +1666,8 @@ fn analyzeBodyInner(
                         try sema.addRuntimeBreak(block, break_data.block_inst, break_data.operand);
                     }
 
-                    try labeled_block.block.instructions.appendSlice(gpa, block.instructions.items[block_index..]);
-                    block.instructions.items.len = block_index;
+                    try labeled_block.block.instructions.appendSlice(gpa, block.instructions.sliceConst()[block_index..]);
+                    block.instructions.info.len = block_index;
 
                     const block_result = try sema.resolveAnalyzedBlock(block, inst_data.src(), &labeled_block.block, &labeled_block.label.merges, need_debug_scope);
                     {
@@ -1818,8 +1818,8 @@ fn analyzeBodyInner(
         };
         if (sema.isNoReturn(air_inst)) {
             // We're going to assume that the body itself is noreturn, so let's ensure that now
-            assert(block.instructions.items.len > 0);
-            assert(sema.isNoReturn(block.instructions.items[block.instructions.items.len - 1].toRef()));
+            assert(block.instructions.info.len > 0);
+            assert(sema.isNoReturn(block.instructions.sliceConst()[block.instructions.info.len - 1].toRef()));
             break;
         }
         map.putAssumeCapacity(inst, air_inst);
@@ -2069,7 +2069,7 @@ pub fn setupErrorReturnTrace(sema: *Sema, block: *Block, last_arg_index: usize) 
     // @errorReturnTrace() = &st;
     _ = try err_trace_block.addUnOp(.set_err_return_trace, st_ptr);
 
-    try block.instructions.insertSlice(gpa, last_arg_index, err_trace_block.instructions.items);
+    try block.instructions.insertSlice(gpa, last_arg_index, err_trace_block.instructions.sliceConst());
 }
 
 /// Return the Value corresponding to a given AIR ref, or `null` if it refers to a runtime value.
@@ -2371,7 +2371,7 @@ fn failWithComptimeErrorRetTrace(
         const msg = try sema.errMsg(block, src, "caught unexpected error '{}'", .{name.fmt(&mod.intern_pool)});
         errdefer msg.destroy(sema.gpa);
 
-        for (sema.comptime_err_ret_trace.items) |src_loc| {
+        for (sema.comptime_err_ret_trace.sliceConst()) |src_loc| {
             try mod.errNoteNonLazy(src_loc, msg, "error returned here", .{});
         }
         break :msg msg;
@@ -2512,7 +2512,7 @@ pub fn failWithOwnedErrorMsg(sema: *Sema, block: ?*Block, err_msg: *Module.Error
                 mod.funcOwnerDeclIndex(sema.owner_func_index)
             else
                 sema.owner_decl_index;
-            var reference_stack = std.ArrayList(Module.ErrorMsg.Trace).init(gpa);
+            var reference_stack = std.ArrayListInline(Module.ErrorMsg.Trace).init(gpa);
             defer reference_stack.deinit();
 
             // Avoid infinite loops.
@@ -2522,7 +2522,7 @@ pub fn failWithOwnedErrorMsg(sema: *Sema, block: ?*Block, err_msg: *Module.Error
             while (mod.reference_table.get(referenced_by)) |ref| {
                 const gop = try seen.getOrPut(ref.referencer);
                 if (gop.found_existing) break;
-                if (reference_stack.items.len < max_references) {
+                if (reference_stack.unmanaged.info.len < max_references) {
                     const decl = mod.declPtr(ref.referencer);
                     try reference_stack.append(.{
                         .decl = decl.name,
@@ -2901,7 +2901,7 @@ fn createAnonymousDeclTypeNamed(
             const fn_info = sema.code.getFnInfo(ip.funcZirBodyInst(sema.func_index).resolve(ip));
             const zir_tags = sema.code.instructions.items(.tag);
 
-            var buf = std.ArrayList(u8).init(gpa);
+            var buf = std.ArrayListInline(u8).init(gpa);
             defer buf.deinit();
 
             const writer = buf.writer();
@@ -2939,7 +2939,7 @@ fn createAnonymousDeclTypeNamed(
             };
 
             try writer.writeByte(')');
-            const name = try ip.getOrPutString(gpa, buf.items, .no_embedded_nulls);
+            const name = try ip.getOrPutString(gpa, buf.sliceConst(), .no_embedded_nulls);
             try zcu.initNewAnonDecl(new_decl_index, src_decl.src_line, val, name);
             return new_decl_index;
         },
@@ -3885,7 +3885,7 @@ fn resolveComptimeKnownAllocPtr(sema: *Sema, block: *Block, alloc: Air.Inst.Ref,
 
     // Whilst constructing our mapping, we will also initialize optional and error union payloads when
     // we encounter the corresponding pointers. For this reason, the ordering of `to_map` matters.
-    var to_map = try std.ArrayList(Air.Inst.Index).initCapacity(sema.arena, stores.len);
+    var to_map = try std.ArrayListInline(Air.Inst.Index).initCapacity(sema.arena, stores.len);
     for (stores) |store_inst_idx| {
         const store_inst = sema.air_instructions.get(@intFromEnum(store_inst_idx));
         const ptr_to_map = switch (store_inst.tag) {
@@ -4266,8 +4266,8 @@ fn zirResolveInferredAlloc(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Com
         .inferred_alloc => {
             const ia1 = sema.air_instructions.items(.data)[@intFromEnum(ptr_inst)].inferred_alloc;
             const ia2 = sema.unresolved_inferred_allocs.fetchSwapRemove(ptr_inst).?.value;
-            const peer_vals = try sema.arena.alloc(Air.Inst.Ref, ia2.prongs.items.len);
-            for (peer_vals, ia2.prongs.items) |*peer_val, store_inst| {
+            const peer_vals = try sema.arena.alloc(Air.Inst.Ref, ia2.prongs.info.len);
+            for (peer_vals, ia2.prongs.sliceConst()) |*peer_val, store_inst| {
                 assert(sema.air_instructions.items(.tag)[@intFromEnum(store_inst)] == .store);
                 const bin_op = sema.air_instructions.items(.data)[@intFromEnum(store_inst)].bin_op;
                 peer_val.* = bin_op.rhs;
@@ -4322,7 +4322,7 @@ fn zirResolveInferredAlloc(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Com
             // Now we need to go back over all the store instructions, and do the logic as if
             // the new result ptr type was available.
 
-            for (ia2.prongs.items) |placeholder_inst| {
+            for (ia2.prongs.sliceConst()) |placeholder_inst| {
                 var replacement_block = block.makeSubBlock();
                 defer replacement_block.instructions.deinit(gpa);
 
@@ -4332,8 +4332,8 @@ fn zirResolveInferredAlloc(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Com
 
                 // If only one instruction is produced then we can replace the store
                 // placeholder instruction with this instruction; no need for an entire block.
-                if (replacement_block.instructions.items.len == 1) {
-                    const only_inst = replacement_block.instructions.items[0];
+                if (replacement_block.instructions.info.len == 1) {
+                    const only_inst = replacement_block.instructions.sliceConst()[0];
                     sema.air_instructions.set(@intFromEnum(placeholder_inst), sema.air_instructions.get(@intFromEnum(only_inst)));
                     continue;
                 }
@@ -4343,18 +4343,18 @@ fn zirResolveInferredAlloc(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Com
                 _ = try replacement_block.addBr(placeholder_inst, .void_value);
                 try sema.air_extra.ensureUnusedCapacity(
                     gpa,
-                    @typeInfo(Air.Block).Struct.fields.len + replacement_block.instructions.items.len,
+                    @typeInfo(Air.Block).Struct.fields.len + replacement_block.instructions.info.len,
                 );
                 sema.air_instructions.set(@intFromEnum(placeholder_inst), .{
                     .tag = .block,
                     .data = .{ .ty_pl = .{
                         .ty = .void_type,
                         .payload = sema.addExtraAssumeCapacity(Air.Block{
-                            .body_len = @intCast(replacement_block.instructions.items.len),
+                            .body_len = @intCast(replacement_block.instructions.info.len),
                         }),
                     } },
                 });
-                sema.air_extra.appendSliceAssumeCapacity(@ptrCast(replacement_block.instructions.items));
+                sema.air_extra.appendSliceAssumeCapacity(@ptrCast(replacement_block.instructions.sliceConst()));
             }
         },
         else => unreachable,
@@ -4825,12 +4825,12 @@ fn validateUnionInit(
     // based only on the store instructions.
     // `first_block_index` needs to point to the `field_ptr` if it exists;
     // the `store` otherwise.
-    var first_block_index = block.instructions.items.len;
-    var block_index = block.instructions.items.len - 1;
+    var first_block_index = block.instructions.info.len;
+    var block_index = block.instructions.info.len - 1;
     var init_val: ?Value = null;
     var init_ref: ?Air.Inst.Ref = null;
     while (block_index > 0) : (block_index -= 1) {
-        const store_inst = block.instructions.items[block_index];
+        const store_inst = block.instructions.sliceConst()[block_index];
         if (store_inst.toRef() == field_ptr_ref) {
             first_block_index = block_index;
             break;
@@ -4848,7 +4848,7 @@ fn validateUnionInit(
         first_block_index = @min(if (field_ptr_ref.toIndex()) |field_ptr_inst|
             std.mem.lastIndexOfScalar(
                 Air.Inst.Index,
-                block.instructions.items[0..block_index],
+                block.instructions.sliceConst()[0..block_index],
                 field_ptr_inst,
             ).?
         else
@@ -4870,7 +4870,7 @@ fn validateUnionInit(
         // Our task is to delete all the `field_ptr` and `store` instructions, and insert
         // instead a single `store` to the result ptr with a comptime union value.
         block_index = first_block_index;
-        for (block.instructions.items[first_block_index..]) |cur_inst| {
+        for (block.instructions.sliceConst()[first_block_index..]) |cur_inst| {
             switch (air_tags[@intFromEnum(cur_inst)]) {
                 .struct_field_ptr,
                 .struct_field_ptr_index_0,
@@ -4888,7 +4888,7 @@ fn validateUnionInit(
                 },
                 else => {},
             }
-            block.instructions.items[block_index] = cur_inst;
+            block.instructions.slice()[block_index] = cur_inst;
             block_index += 1;
         }
         block.instructions.shrinkRetainingCapacity(block_index);
@@ -5019,7 +5019,7 @@ fn validateStructInit(
     var fields_allow_runtime = true;
 
     var struct_is_comptime = true;
-    var first_block_index = block.instructions.items.len;
+    var first_block_index = block.instructions.info.len;
 
     const require_comptime = try sema.typeRequiresComptime(struct_ty);
     const air_tags = sema.air_instructions.items(.tag);
@@ -5062,10 +5062,10 @@ fn validateStructInit(
 
             // Possible performance enhancement: save the `block_index` between iterations
             // of the for loop.
-            var block_index = block.instructions.items.len;
+            var block_index = block.instructions.info.len;
             while (block_index > 0) {
                 block_index -= 1;
-                const store_inst = block.instructions.items[block_index];
+                const store_inst = block.instructions.sliceConst()[block_index];
                 if (store_inst.toRef() == field_ptr_ref) {
                     struct_is_comptime = false;
                     continue :field;
@@ -5083,7 +5083,7 @@ fn validateStructInit(
                 first_block_index = @min(if (field_ptr_ref.toIndex()) |field_ptr_inst|
                     std.mem.lastIndexOfScalar(
                         Air.Inst.Index,
-                        block.instructions.items[0..block_index],
+                        block.instructions.sliceConst()[0..block_index],
                         field_ptr_inst,
                     ).?
                 else
@@ -5154,7 +5154,7 @@ fn validateStructInit(
         var init_index: usize = 0;
         var field_ptr_ref = Air.Inst.Ref.none;
         var block_index = first_block_index;
-        for (block.instructions.items[first_block_index..]) |cur_inst| {
+        for (block.instructions.sliceConst()[first_block_index..]) |cur_inst| {
             while (field_ptr_ref == .none and init_index < instrs.len) : (init_index += 1) {
                 const field_ty = struct_ty.structFieldType(field_indices[init_index], mod);
                 if (try field_ty.onePossibleValue(mod)) |_| continue;
@@ -5180,7 +5180,7 @@ fn validateStructInit(
                 },
                 else => {},
             }
-            block.instructions.items[block_index] = cur_inst;
+            block.instructions.slice()[block_index] = cur_inst;
             block_index += 1;
         }
         block.instructions.shrinkRetainingCapacity(block_index);
@@ -5297,7 +5297,7 @@ fn zirValidatePtrArrayInit(
     }
 
     var array_is_comptime = true;
-    var first_block_index = block.instructions.items.len;
+    var first_block_index = block.instructions.info.len;
 
     const air_tags = sema.air_instructions.items(.tag);
     const air_datas = sema.air_instructions.items(.data);
@@ -5332,10 +5332,10 @@ fn zirValidatePtrArrayInit(
 
         // Possible performance enhancement: save the `block_index` between iterations
         // of the for loop.
-        var block_index = block.instructions.items.len;
+        var block_index = block.instructions.info.len;
         while (block_index > 0) {
             block_index -= 1;
-            const store_inst = block.instructions.items[block_index];
+            const store_inst = block.instructions.sliceConst()[block_index];
             if (store_inst.toRef() == elem_ptr_ref) {
                 array_is_comptime = false;
                 continue :outer;
@@ -5353,7 +5353,7 @@ fn zirValidatePtrArrayInit(
             first_block_index = @min(if (elem_ptr_ref.toIndex()) |elem_ptr_inst|
                 std.mem.lastIndexOfScalar(
                     Air.Inst.Index,
-                    block.instructions.items[0..block_index],
+                    block.instructions.sliceConst()[0..block_index],
                     elem_ptr_inst,
                 ).?
             else
@@ -5385,7 +5385,7 @@ fn zirValidatePtrArrayInit(
         var elem_index: usize = 0;
         var elem_ptr_ref = Air.Inst.Ref.none;
         var block_index = first_block_index;
-        for (block.instructions.items[first_block_index..]) |cur_inst| {
+        for (block.instructions.sliceConst()[first_block_index..]) |cur_inst| {
             while (elem_ptr_ref == .none and elem_index < instrs.len) : (elem_index += 1) {
                 if (array_ty.isTuple(mod) and array_ty.structFieldIsComptime(elem_index, mod)) continue;
                 elem_ptr_ref = sema.inst_map.get(instrs[elem_index]).?;
@@ -5405,7 +5405,7 @@ fn zirValidatePtrArrayInit(
                 },
                 else => {},
             }
-            block.instructions.items[block_index] = cur_inst;
+            block.instructions.slice()[block_index] = cur_inst;
             block_index += 1;
         }
         block.instructions.shrinkRetainingCapacity(block_index);
@@ -5953,11 +5953,11 @@ fn zirLoop(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileError
     // Use `analyzeBodyInner` directly to push any comptime control flow up the stack.
     try sema.analyzeBodyInner(&loop_block, body);
 
-    const loop_block_len = loop_block.instructions.items.len;
-    if (loop_block_len > 0 and sema.typeOf(loop_block.instructions.items[loop_block_len - 1].toRef()).isNoReturn(mod)) {
+    const loop_block_len = loop_block.instructions.info.len;
+    if (loop_block_len > 0 and sema.typeOf(loop_block.instructions.sliceConst()[loop_block_len - 1].toRef()).isNoReturn(mod)) {
         // If the loop ended with a noreturn terminator, then there is no way for it to loop,
         // so we can just use the block instead.
-        try child_block.instructions.appendSlice(gpa, loop_block.instructions.items);
+        try child_block.instructions.appendSlice(gpa, loop_block.instructions.sliceConst());
     } else {
         try child_block.instructions.append(gpa, loop_inst);
 
@@ -5965,7 +5965,7 @@ fn zirLoop(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileError
         sema.air_instructions.items(.data)[@intFromEnum(loop_inst)].ty_pl.payload = sema.addExtraAssumeCapacity(
             Air.Block{ .body_len = @intCast(loop_block_len) },
         );
-        sema.air_extra.appendSliceAssumeCapacity(@ptrCast(loop_block.instructions.items));
+        sema.air_extra.appendSliceAssumeCapacity(@ptrCast(loop_block.instructions.sliceConst()));
     }
     return sema.resolveAnalyzedBlock(parent_block, src, &child_block, merges, false);
 }
@@ -5986,7 +5986,7 @@ fn zirCImport(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileEr
     if (!build_options.have_llvm)
         return sema.fail(parent_block, src, "C import unavailable; Zig compiler built without LLVM extensions", .{});
 
-    var c_import_buf = std.ArrayList(u8).init(gpa);
+    var c_import_buf = std.ArrayListInline(u8).init(gpa);
     defer c_import_buf.deinit();
 
     var comptime_reason: Block.ComptimeReason = .{ .c_import = .{
@@ -6011,7 +6011,7 @@ fn zirCImport(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileEr
 
     _ = try sema.analyzeInlineBody(&child_block, body, inst);
 
-    var c_import_res = comp.cImport(c_import_buf.items, parent_block.ownerModule()) catch |err|
+    var c_import_res = comp.cImport(c_import_buf.sliceConst(), parent_block.ownerModule()) catch |err|
         return sema.fail(&child_block, src, "C import failed: {s}", .{@errorName(err)});
     defer c_import_res.deinit(gpa);
 
@@ -6165,22 +6165,22 @@ fn resolveBlockBody(
             error.ComptimeBreak => {
                 // Comptime control flow is happening, however child_block may still contain
                 // runtime instructions which need to be copied to the parent block.
-                if (need_debug_scope and child_block.instructions.items.len > 0) {
+                if (need_debug_scope and child_block.instructions.info.len > 0) {
                     // We need a runtime block for scoping reasons.
                     _ = try child_block.addBr(merges.block_inst, .void_value);
                     try parent_block.instructions.append(sema.gpa, merges.block_inst);
                     try sema.air_extra.ensureUnusedCapacity(sema.gpa, @typeInfo(Air.Block).Struct.fields.len +
-                        child_block.instructions.items.len);
+                        child_block.instructions.info.len);
                     sema.air_instructions.items(.data)[@intFromEnum(merges.block_inst)] = .{ .ty_pl = .{
                         .ty = .void_type,
                         .payload = sema.addExtraAssumeCapacity(Air.Block{
-                            .body_len = @intCast(child_block.instructions.items.len),
+                            .body_len = @intCast(child_block.instructions.info.len),
                         }),
                     } };
-                    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.items));
+                    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.sliceConst()));
                 } else {
                     // We can copy instructions directly to the parent block.
-                    try parent_block.instructions.appendSlice(sema.gpa, child_block.instructions.items);
+                    try parent_block.instructions.appendSlice(sema.gpa, child_block.instructions.sliceConst());
                 }
 
                 const break_inst = sema.comptime_break_inst;
@@ -6217,8 +6217,8 @@ fn resolveAnalyzedBlock(
     const mod = sema.mod;
 
     // Blocks must terminate with noreturn instruction.
-    assert(child_block.instructions.items.len != 0);
-    assert(sema.typeOf(child_block.instructions.items[child_block.instructions.items.len - 1].toRef()).isNoReturn(mod));
+    assert(child_block.instructions.info.len != 0);
+    assert(sema.typeOf(child_block.instructions.sliceConst()[child_block.instructions.info.len - 1].toRef()).isNoReturn(mod));
 
     const block_tag = sema.air_instructions.items(.tag)[@intFromEnum(merges.block_inst)];
     switch (block_tag) {
@@ -6226,7 +6226,7 @@ fn resolveAnalyzedBlock(
         .dbg_inline_block => assert(need_debug_scope),
         else => unreachable,
     }
-    if (merges.results.items.len == 0) {
+    if (merges.results.info.len == 0) {
         switch (block_tag) {
             .block => {
                 // No need for a block instruction. We can put the new instructions
@@ -6238,76 +6238,76 @@ fn resolveAnalyzedBlock(
                     // so forward this request to the parent block.
                     if (parent_block.need_debug_scope) |ptr| ptr.* = true;
                 }
-                try parent_block.instructions.appendSlice(gpa, child_block.instructions.items);
-                return child_block.instructions.items[child_block.instructions.items.len - 1].toRef();
+                try parent_block.instructions.appendSlice(gpa, child_block.instructions.sliceConst());
+                return child_block.instructions.sliceConst()[child_block.instructions.info.len - 1].toRef();
             },
             .dbg_inline_block => {
                 // Create a block containing all instruction from the body.
                 try parent_block.instructions.append(gpa, merges.block_inst);
                 try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.DbgInlineBlock).Struct.fields.len +
-                    child_block.instructions.items.len);
+                    child_block.instructions.info.len);
                 sema.air_instructions.items(.data)[@intFromEnum(merges.block_inst)] = .{ .ty_pl = .{
                     .ty = .noreturn_type,
                     .payload = sema.addExtraAssumeCapacity(Air.DbgInlineBlock{
                         .func = child_block.inlining.?.func,
-                        .body_len = @intCast(child_block.instructions.items.len),
+                        .body_len = @intCast(child_block.instructions.info.len),
                     }),
                 } };
-                sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.items));
+                sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.sliceConst()));
                 return merges.block_inst.toRef();
             },
             else => unreachable,
         }
     }
-    if (merges.results.items.len == 1) {
+    if (merges.results.info.len == 1) {
         // If the `break` is trailing, we may be able to elide the AIR block here
         // by appending the new instructions directly to the parent block.
         if (!need_debug_scope) {
-            const last_inst_index = child_block.instructions.items.len - 1;
-            const last_inst = child_block.instructions.items[last_inst_index];
+            const last_inst_index = child_block.instructions.info.len - 1;
+            const last_inst = child_block.instructions.sliceConst()[last_inst_index];
             if (sema.getBreakBlock(last_inst)) |br_block| {
                 if (br_block == merges.block_inst) {
                     // Great, the last instruction is the break! Put the instructions
                     // directly into the parent block.
-                    try parent_block.instructions.appendSlice(gpa, child_block.instructions.items[0..last_inst_index]);
-                    return merges.results.items[0];
+                    try parent_block.instructions.appendSlice(gpa, child_block.instructions.sliceConst()[0..last_inst_index]);
+                    return merges.results.sliceConst()[0];
                 }
             }
         }
         // Okay, we need a runtime block. If the value is comptime-known, the
         // block should just return void, and we return the merge result
         // directly. Otherwise, we can defer to the logic below.
-        if (try sema.resolveValue(merges.results.items[0])) |result_val| {
+        if (try sema.resolveValue(merges.results.sliceConst()[0])) |result_val| {
             // Create a block containing all instruction from the body.
             try parent_block.instructions.append(gpa, merges.block_inst);
             switch (block_tag) {
                 .block => {
                     try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.Block).Struct.fields.len +
-                        child_block.instructions.items.len);
+                        child_block.instructions.info.len);
                     sema.air_instructions.items(.data)[@intFromEnum(merges.block_inst)] = .{ .ty_pl = .{
                         .ty = .void_type,
                         .payload = sema.addExtraAssumeCapacity(Air.Block{
-                            .body_len = @intCast(child_block.instructions.items.len),
+                            .body_len = @intCast(child_block.instructions.info.len),
                         }),
                     } };
                 },
                 .dbg_inline_block => {
                     try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.DbgInlineBlock).Struct.fields.len +
-                        child_block.instructions.items.len);
+                        child_block.instructions.info.len);
                     sema.air_instructions.items(.data)[@intFromEnum(merges.block_inst)] = .{ .ty_pl = .{
                         .ty = .void_type,
                         .payload = sema.addExtraAssumeCapacity(Air.DbgInlineBlock{
                             .func = child_block.inlining.?.func,
-                            .body_len = @intCast(child_block.instructions.items.len),
+                            .body_len = @intCast(child_block.instructions.info.len),
                         }),
                     } };
                 },
                 else => unreachable,
             }
-            sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.items));
+            sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.sliceConst()));
             // Rewrite the break to just give value {}; the value is
             // comptime-known and will be returned directly.
-            sema.air_instructions.items(.data)[@intFromEnum(merges.br_list.items[0])].br.operand = .void_value;
+            sema.air_instructions.items(.data)[@intFromEnum(merges.br_list.sliceConst()[0])].br.operand = .void_value;
             return Air.internedToRef(result_val.toIntern());
         }
     }
@@ -6319,7 +6319,7 @@ fn resolveAnalyzedBlock(
     // Need to set the type and emit the Block instruction. This allows machine code generation
     // to emit a jump instruction to after the block when it encounters the break.
     try parent_block.instructions.append(gpa, merges.block_inst);
-    const resolved_ty = try sema.resolvePeerTypes(parent_block, src, merges.results.items, .{ .override = merges.src_locs.items });
+    const resolved_ty = try sema.resolvePeerTypes(parent_block, src, merges.results.sliceConst(), .{ .override = merges.src_locs.sliceConst() });
     // TODO add note "missing else causes void value"
 
     const type_src = src; // TODO: better source location
@@ -6338,38 +6338,38 @@ fn resolveAnalyzedBlock(
         };
         return sema.failWithOwnedErrorMsg(child_block, msg);
     }
-    for (merges.results.items, merges.src_locs.items) |merge_inst, merge_src| {
+    for (merges.results.sliceConst(), merges.src_locs.sliceConst()) |merge_inst, merge_src| {
         try sema.validateRuntimeValue(child_block, merge_src orelse src, merge_inst);
     }
     const ty_inst = Air.internedToRef(resolved_ty.toIntern());
     switch (block_tag) {
         .block => {
             try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.Block).Struct.fields.len +
-                child_block.instructions.items.len);
+                child_block.instructions.info.len);
             sema.air_instructions.items(.data)[@intFromEnum(merges.block_inst)] = .{ .ty_pl = .{
                 .ty = ty_inst,
                 .payload = sema.addExtraAssumeCapacity(Air.Block{
-                    .body_len = @intCast(child_block.instructions.items.len),
+                    .body_len = @intCast(child_block.instructions.info.len),
                 }),
             } };
         },
         .dbg_inline_block => {
             try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.DbgInlineBlock).Struct.fields.len +
-                child_block.instructions.items.len);
+                child_block.instructions.info.len);
             sema.air_instructions.items(.data)[@intFromEnum(merges.block_inst)] = .{ .ty_pl = .{
                 .ty = ty_inst,
                 .payload = sema.addExtraAssumeCapacity(Air.DbgInlineBlock{
                     .func = child_block.inlining.?.func,
-                    .body_len = @intCast(child_block.instructions.items.len),
+                    .body_len = @intCast(child_block.instructions.info.len),
                 }),
             } };
         },
         else => unreachable,
     }
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.sliceConst()));
     // Now that the block has its type resolved, we need to go back into all the break
     // instructions, and insert type coercion on the operands.
-    for (merges.br_list.items) |br| {
+    for (merges.br_list.sliceConst()) |br| {
         const br_operand = sema.air_instructions.items(.data)[@intFromEnum(br)].br.operand;
         const br_operand_src = src;
         const br_operand_ty = sema.typeOf(br_operand);
@@ -6382,15 +6382,15 @@ fn resolveAnalyzedBlock(
         const coerced_operand = try sema.coerce(&coerce_block, resolved_ty, br_operand, br_operand_src);
         // If no instructions were produced, such as in the case of a coercion of a
         // constant value to a new type, we can simply point the br operand to it.
-        if (coerce_block.instructions.items.len == 0) {
+        if (coerce_block.instructions.info.len == 0) {
             sema.air_instructions.items(.data)[@intFromEnum(br)].br.operand = coerced_operand;
             continue;
         }
-        assert(coerce_block.instructions.items[coerce_block.instructions.items.len - 1].toRef() == coerced_operand);
+        assert(coerce_block.instructions.sliceConst()[coerce_block.instructions.info.len - 1].toRef() == coerced_operand);
 
         // Convert the br instruction to a block instruction that has the coercion
         // and then a new br inside that returns the coerced instruction.
-        const sub_block_len: u32 = @intCast(coerce_block.instructions.items.len + 1);
+        const sub_block_len: u32 = @intCast(coerce_block.instructions.info.len + 1);
         try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.Block).Struct.fields.len +
             sub_block_len);
         try sema.air_instructions.ensureUnusedCapacity(gpa, 1);
@@ -6403,7 +6403,7 @@ fn resolveAnalyzedBlock(
                 .body_len = sub_block_len,
             }),
         } };
-        sema.air_extra.appendSliceAssumeCapacity(@ptrCast(coerce_block.instructions.items));
+        sema.air_extra.appendSliceAssumeCapacity(@ptrCast(coerce_block.instructions.sliceConst()));
         sema.air_extra.appendAssumeCapacity(@intFromEnum(sub_br_inst));
 
         sema.air_instructions.appendAssumeCapacity(.{
@@ -6694,8 +6694,8 @@ fn zirDbgStmt(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!voi
 
     const inst_data = sema.code.instructions.items(.data)[@intFromEnum(inst)].dbg_stmt;
 
-    if (block.instructions.items.len != 0) {
-        const idx = block.instructions.items[block.instructions.items.len - 1];
+    if (block.instructions.info.len != 0) {
+        const idx = block.instructions.sliceConst()[block.instructions.info.len - 1];
         if (sema.air_instructions.items(.tag)[@intFromEnum(idx)] == .dbg_stmt) {
             // The previous dbg_stmt didn't correspond to any actual code, so replace it.
             sema.air_instructions.items(.data)[@intFromEnum(idx)].dbg_stmt = .{
@@ -6761,13 +6761,13 @@ fn addDbgVar(
     try sema.queueFullTypeResolution(operand_ty);
 
     // Add the name to the AIR.
-    const name_extra_index: u32 = @intCast(sema.air_extra.items.len);
+    const name_extra_index: u32 = @intCast(sema.air_extra.info.len);
     const elements_used = name.len / 4 + 1;
     try sema.air_extra.ensureUnusedCapacity(sema.gpa, elements_used);
     const buffer = mem.sliceAsBytes(sema.air_extra.unusedCapacitySlice());
     @memcpy(buffer[0..name.len], name);
     buffer[name.len] = 0;
-    sema.air_extra.items.len += elements_used;
+    sema.air_extra.info.len += @intCast(elements_used);
 
     _ = try block.addInst(.{
         .tag = air_tag,
@@ -6844,7 +6844,7 @@ fn lookupInNamespace(
         defer checked_namespaces.deinit(gpa);
 
         // Keep track of name conflicts for error notes.
-        var candidates: std.ArrayListUnmanaged(InternPool.DeclIndex) = .{};
+        var candidates: std.ArrayListInlineUnmanaged(InternPool.DeclIndex) = .{};
         defer candidates.deinit(gpa);
 
         try checked_namespaces.put(gpa, namespace, namespace.file_scope == src_file);
@@ -6881,8 +6881,8 @@ fn lookupInNamespace(
 
         {
             var i: usize = 0;
-            while (i < candidates.items.len) {
-                if (candidates.items[i] == sema.owner_decl_index) {
+            while (i < candidates.info.len) {
+                if (candidates.sliceConst()[i] == sema.owner_decl_index) {
                     _ = candidates.orderedRemove(i);
                 } else {
                     i += 1;
@@ -6890,17 +6890,17 @@ fn lookupInNamespace(
             }
         }
 
-        switch (candidates.items.len) {
+        switch (candidates.info.len) {
             0 => {},
             1 => {
-                const decl_index = candidates.items[0];
+                const decl_index = candidates.sliceConst()[0];
                 return decl_index;
             },
             else => {
                 const msg = msg: {
                     const msg = try sema.errMsg(block, src, "ambiguous reference", .{});
                     errdefer msg.destroy(gpa);
-                    for (candidates.items) |candidate_index| {
+                    for (candidates.sliceConst()) |candidate_index| {
                         const candidate = mod.declPtr(candidate_index);
                         const src_loc = candidate.srcLoc(mod);
                         try mod.errNoteNonLazy(src_loc, msg, "declared here", .{});
@@ -6938,7 +6938,7 @@ pub fn analyzeSaveErrRetIndex(sema: *Sema, block: *Block) SemaError!Air.Inst.Ref
     const gpa = sema.gpa;
 
     if (block.is_comptime or block.is_typeof) {
-        const index_val = try mod.intValue_u64(Type.usize, sema.comptime_err_ret_trace.items.len);
+        const index_val = try mod.intValue_u64(Type.usize, sema.comptime_err_ret_trace.unmanaged.info.len);
         return Air.internedToRef(index_val.toIntern());
     }
 
@@ -7032,19 +7032,19 @@ fn popErrorReturnTrace(
         _ = try else_block.addBr(cond_block_inst, .void_value);
 
         try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.CondBr).Struct.fields.len +
-            then_block.instructions.items.len + else_block.instructions.items.len +
+            then_block.instructions.info.len + else_block.instructions.info.len +
             @typeInfo(Air.Block).Struct.fields.len + 1); // +1 for the sole .cond_br instruction in the .block
 
         const cond_br_inst: Air.Inst.Index = @enumFromInt(sema.air_instructions.len);
         try sema.air_instructions.append(gpa, .{ .tag = .cond_br, .data = .{ .pl_op = .{
             .operand = is_non_error_inst,
             .payload = sema.addExtraAssumeCapacity(Air.CondBr{
-                .then_body_len = @intCast(then_block.instructions.items.len),
-                .else_body_len = @intCast(else_block.instructions.items.len),
+                .then_body_len = @intCast(then_block.instructions.info.len),
+                .else_body_len = @intCast(else_block.instructions.info.len),
             }),
         } } });
-        sema.air_extra.appendSliceAssumeCapacity(@ptrCast(then_block.instructions.items));
-        sema.air_extra.appendSliceAssumeCapacity(@ptrCast(else_block.instructions.items));
+        sema.air_extra.appendSliceAssumeCapacity(@ptrCast(then_block.instructions.sliceConst()));
+        sema.air_extra.appendSliceAssumeCapacity(@ptrCast(else_block.instructions.sliceConst()));
 
         sema.air_instructions.items(.data)[@intFromEnum(cond_block_inst)].ty_pl.payload = sema.addExtraAssumeCapacity(Air.Block{ .body_len = 1 });
         sema.air_extra.appendAssumeCapacity(@intFromEnum(cond_br_inst));
@@ -7098,7 +7098,7 @@ fn zirCall(
     const func_ty = try sema.checkCallArgumentCount(block, func, callee_src, callee_ty, total_args, callee == .method);
 
     // The block index before the call, so we can potentially insert an error trace save here later.
-    const block_index: Air.Inst.Index = @enumFromInt(block.instructions.items.len);
+    const block_index: Air.Inst.Index = @enumFromInt(block.instructions.info.len);
 
     // This will be set by `analyzeCall` to indicate whether any parameter was an error (making the
     // error trace potentially dirty).
@@ -8242,7 +8242,7 @@ fn instantiateGenericCall(
 
     // We may overestimate the number of runtime args, but this will definitely be sufficient.
     const max_runtime_args = args_info.count() - @popCount(generic_owner_ty_info.comptime_bits);
-    var runtime_args = try std.ArrayListUnmanaged(Air.Inst.Ref).initCapacity(sema.arena, max_runtime_args);
+    var runtime_args = try std.ArrayListInlineUnmanaged(Air.Inst.Ref).initCapacity(sema.arena, max_runtime_args);
 
     // Re-run the block that creates the function, with the comptime parameters
     // pre-populated inside `inst_map`. This causes `param_comptime` and
@@ -8455,17 +8455,17 @@ fn instantiateGenericCall(
 
     try mod.ensureFuncBodyAnalysisQueued(callee_index);
 
-    try sema.air_extra.ensureUnusedCapacity(sema.gpa, @typeInfo(Air.Call).Struct.fields.len + runtime_args.items.len);
+    try sema.air_extra.ensureUnusedCapacity(sema.gpa, @typeInfo(Air.Call).Struct.fields.len + runtime_args.info.len);
     const result = try block.addInst(.{
         .tag = call_tag,
         .data = .{ .pl_op = .{
             .operand = Air.internedToRef(callee_index),
             .payload = sema.addExtraAssumeCapacity(Air.Call{
-                .args_len = @intCast(runtime_args.items.len),
+                .args_len = @intCast(runtime_args.info.len),
             }),
         } },
     });
-    sema.appendRefsAssumeCapacity(runtime_args.items);
+    sema.appendRefsAssumeCapacity(runtime_args.sliceConst());
 
     if (ensure_result_used) {
         try sema.ensureResultUsed(block, sema.typeOf(result), call_src);
@@ -11388,7 +11388,7 @@ const SwitchProngAnalysis = struct {
                 const prong_count = field_indices.len - in_mem_coercible.count();
 
                 const estimated_extra = prong_count * 6; // 2 for Case, 1 item, probably 3 insts
-                var cases_extra = try std.ArrayList(u32).initCapacity(sema.gpa, estimated_extra);
+                var cases_extra = try std.ArrayListInline(u32).initCapacity(sema.gpa, estimated_extra);
                 defer cases_extra.deinit();
 
                 {
@@ -11414,11 +11414,11 @@ const SwitchProngAnalysis = struct {
                         };
                         _ = try coerce_block.addBr(capture_block_inst, coerced);
 
-                        try cases_extra.ensureUnusedCapacity(3 + coerce_block.instructions.items.len);
+                        try cases_extra.ensureUnusedCapacity(3 + coerce_block.instructions.info.len);
                         cases_extra.appendAssumeCapacity(1); // items_len
-                        cases_extra.appendAssumeCapacity(@intCast(coerce_block.instructions.items.len)); // body_len
+                        cases_extra.appendAssumeCapacity(@intCast(coerce_block.instructions.info.len)); // body_len
                         cases_extra.appendAssumeCapacity(@intFromEnum(case_vals[idx])); // item
-                        cases_extra.appendSliceAssumeCapacity(@ptrCast(coerce_block.instructions.items)); // body
+                        cases_extra.appendSliceAssumeCapacity(@ptrCast(coerce_block.instructions.sliceConst())); // body
                     }
                 }
                 const else_body_len = len: {
@@ -11433,12 +11433,12 @@ const SwitchProngAnalysis = struct {
                     const coerced = try coerce_block.addBitCast(capture_ty, uncoerced);
                     _ = try coerce_block.addBr(capture_block_inst, coerced);
 
-                    try cases_extra.appendSlice(@ptrCast(coerce_block.instructions.items));
-                    break :len coerce_block.instructions.items.len;
+                    try cases_extra.appendSlice(@ptrCast(coerce_block.instructions.sliceConst()));
+                    break :len coerce_block.instructions.info.len;
                 };
 
                 try sema.air_extra.ensureUnusedCapacity(sema.gpa, @typeInfo(Air.SwitchBr).Struct.fields.len +
-                    cases_extra.items.len +
+                    cases_extra.unmanaged.info.len +
                     @typeInfo(Air.Block).Struct.fields.len +
                     1);
 
@@ -11453,7 +11453,7 @@ const SwitchProngAnalysis = struct {
                         }),
                     } },
                 });
-                sema.air_extra.appendSliceAssumeCapacity(cases_extra.items);
+                sema.air_extra.appendSliceAssumeCapacity(cases_extra.sliceConst());
 
                 // Set up block body
                 sema.air_instructions.items(.data)[@intFromEnum(capture_block_inst)].ty_pl.payload = sema.addExtraAssumeCapacity(Air.Block{
@@ -11606,7 +11606,7 @@ fn zirSwitchBlockErrUnion(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Comp
         break :blk err_capture_inst;
     } else undefined;
 
-    var case_vals = try std.ArrayListUnmanaged(Air.Inst.Ref).initCapacity(gpa, scalar_cases_len + 2 * multi_cases_len);
+    var case_vals = try std.ArrayListInlineUnmanaged(Air.Inst.Ref).initCapacity(gpa, scalar_cases_len + 2 * multi_cases_len);
     defer case_vals.deinit(gpa);
 
     const NonError = struct {
@@ -11856,7 +11856,7 @@ fn zirSwitchBlockErrUnion(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Comp
     );
 
     try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.CondBr).Struct.fields.len +
-        true_instructions.len + sub_block.instructions.items.len);
+        true_instructions.len + sub_block.instructions.info.len);
 
     _ = try child_block.addInst(.{
         .tag = .cond_br,
@@ -11864,12 +11864,12 @@ fn zirSwitchBlockErrUnion(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Comp
             .operand = cond,
             .payload = sema.addExtraAssumeCapacity(Air.CondBr{
                 .then_body_len = @intCast(true_instructions.len),
-                .else_body_len = @intCast(sub_block.instructions.items.len),
+                .else_body_len = @intCast(sub_block.instructions.info.len),
             }),
         } },
     });
     sema.air_extra.appendSliceAssumeCapacity(@ptrCast(true_instructions));
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(sub_block.instructions.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(sub_block.instructions.sliceConst()));
 
     return sema.resolveAnalyzedBlock(block, main_src, &child_block, merges, false);
 }
@@ -11922,7 +11922,7 @@ fn zirSwitchBlock(sema: *Sema, block: *Block, inst: Zir.Inst.Index, operand_is_r
         break :blk tag_capture_inst;
     } else undefined;
 
-    var case_vals = try std.ArrayListUnmanaged(Air.Inst.Ref).initCapacity(gpa, scalar_cases_len + 2 * multi_cases_len);
+    var case_vals = try std.ArrayListInlineUnmanaged(Air.Inst.Ref).initCapacity(gpa, scalar_cases_len + 2 * multi_cases_len);
     defer case_vals.deinit(gpa);
 
     const special_prong = extra.data.bits.specialProng();
@@ -12511,7 +12511,7 @@ fn analyzeSwitchRuntimeBlock(
     operand: Air.Inst.Ref,
     operand_ty: Type,
     operand_src: LazySrcLoc,
-    case_vals: std.ArrayListUnmanaged(Air.Inst.Ref),
+    case_vals: std.ArrayListInlineUnmanaged(Air.Inst.Ref),
     special: SpecialProng,
     scalar_cases_len: usize,
     multi_cases_len: usize,
@@ -12536,7 +12536,7 @@ fn analyzeSwitchRuntimeBlock(
 
     const estimated_cases_extra = (scalar_cases_len + multi_cases_len) *
         @typeInfo(Air.SwitchBr.Case).Struct.fields.len + 2;
-    var cases_extra = try std.ArrayListUnmanaged(u32).initCapacity(gpa, estimated_cases_extra);
+    var cases_extra = try std.ArrayListInlineUnmanaged(u32).initCapacity(gpa, estimated_cases_extra);
     defer cases_extra.deinit(gpa);
 
     var case_block = child_block.makeSubBlock();
@@ -12559,7 +12559,7 @@ fn analyzeSwitchRuntimeBlock(
         case_block.instructions.shrinkRetainingCapacity(0);
         case_block.error_return_trace_index = child_block.error_return_trace_index;
 
-        const item = case_vals.items[scalar_i];
+        const item = case_vals.sliceConst()[scalar_i];
         // `item` is already guaranteed to be constant known.
 
         const analyze_body = if (union_originally) blk: {
@@ -12586,11 +12586,11 @@ fn analyzeSwitchRuntimeBlock(
             _ = try case_block.addNoOp(.unreach);
         }
 
-        try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.items.len);
+        try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.info.len);
         cases_extra.appendAssumeCapacity(1); // items_len
-        cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.items.len));
+        cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.info.len));
         cases_extra.appendAssumeCapacity(@intFromEnum(item));
-        cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+        cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
     }
 
     var is_first = true;
@@ -12611,7 +12611,7 @@ fn analyzeSwitchRuntimeBlock(
         const info: Zir.Inst.SwitchBlock.ProngInfo = @bitCast(sema.code.extra[extra_index]);
         extra_index += 1 + items_len;
 
-        const items = case_vals.items[case_val_idx..][0..items_len];
+        const items = case_vals.sliceConst()[case_val_idx..][0..items_len];
         case_val_idx += items_len;
 
         case_block.instructions.shrinkRetainingCapacity(0);
@@ -12625,7 +12625,7 @@ fn analyzeSwitchRuntimeBlock(
 
             var range_i: u32 = 0;
             while (range_i < ranges_len) : (range_i += 1) {
-                const range_items = case_vals.items[case_val_idx..][0..2];
+                const range_items = case_vals.sliceConst()[case_val_idx..][0..2];
                 extra_index += 2;
                 case_val_idx += 2;
 
@@ -12673,11 +12673,11 @@ fn analyzeSwitchRuntimeBlock(
                         info.has_tag_capture,
                     );
 
-                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.items.len);
+                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.info.len);
                     cases_extra.appendAssumeCapacity(1); // items_len
-                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.items.len));
+                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.info.len));
                     cases_extra.appendAssumeCapacity(@intFromEnum(item_ref));
-                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
 
                     if (item.compareScalar(.eq, item_last, operand_ty, mod)) break;
                 }
@@ -12723,11 +12723,11 @@ fn analyzeSwitchRuntimeBlock(
                     _ = try case_block.addNoOp(.unreach);
                 }
 
-                try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.items.len);
+                try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.info.len);
                 cases_extra.appendAssumeCapacity(1); // items_len
-                cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.items.len));
+                cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.info.len));
                 cases_extra.appendAssumeCapacity(@intFromEnum(item));
-                cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+                cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
             }
 
             extra_index += info.body_len;
@@ -12771,16 +12771,16 @@ fn analyzeSwitchRuntimeBlock(
             }
 
             try cases_extra.ensureUnusedCapacity(gpa, 2 + items.len +
-                case_block.instructions.items.len);
+                case_block.instructions.info.len);
 
             cases_extra.appendAssumeCapacity(@intCast(items.len));
-            cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.items.len));
+            cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.info.len));
 
             for (items) |item| {
                 cases_extra.appendAssumeCapacity(@intFromEnum(item));
             }
 
-            cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+            cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
         } else {
             for (items) |item| {
                 const cmp_ok = try case_block.addBinOp(if (case_block.float_mode == .optimized) .cmp_eq_optimized else .cmp_eq, operand, item);
@@ -12793,7 +12793,7 @@ fn analyzeSwitchRuntimeBlock(
 
             var range_i: usize = 0;
             while (range_i < ranges_len) : (range_i += 1) {
-                const range_items = case_vals.items[case_val_idx..][0..2];
+                const range_items = case_vals.sliceConst()[case_val_idx..][0..2];
                 extra_index += 2;
                 case_val_idx += 2;
 
@@ -12919,11 +12919,11 @@ fn analyzeSwitchRuntimeBlock(
                         _ = try case_block.addNoOp(.unreach);
                     }
 
-                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.items.len);
+                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.info.len);
                     cases_extra.appendAssumeCapacity(1); // items_len
-                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.items.len));
+                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.info.len));
                     cases_extra.appendAssumeCapacity(@intFromEnum(item_ref));
-                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
                 }
             },
             .ErrorSet => {
@@ -12961,11 +12961,11 @@ fn analyzeSwitchRuntimeBlock(
                         special.has_tag_capture,
                     );
 
-                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.items.len);
+                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.info.len);
                     cases_extra.appendAssumeCapacity(1); // items_len
-                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.items.len));
+                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.info.len));
                     cases_extra.appendAssumeCapacity(@intFromEnum(item_ref));
-                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
                 }
             },
             .Int => {
@@ -12992,11 +12992,11 @@ fn analyzeSwitchRuntimeBlock(
                         special.has_tag_capture,
                     );
 
-                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.items.len);
+                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.info.len);
                     cases_extra.appendAssumeCapacity(1); // items_len
-                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.items.len));
+                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.info.len));
                     cases_extra.appendAssumeCapacity(@intFromEnum(item_ref));
-                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
                 }
             },
             .Bool => {
@@ -13020,11 +13020,11 @@ fn analyzeSwitchRuntimeBlock(
                         special.has_tag_capture,
                     );
 
-                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.items.len);
+                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.info.len);
                     cases_extra.appendAssumeCapacity(1); // items_len
-                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.items.len));
+                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.info.len));
                     cases_extra.appendAssumeCapacity(@intFromEnum(Air.Inst.Ref.bool_true));
-                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
                 }
                 if (false_count == 0) {
                     cases_len += 1;
@@ -13046,11 +13046,11 @@ fn analyzeSwitchRuntimeBlock(
                         special.has_tag_capture,
                     );
 
-                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.items.len);
+                    try cases_extra.ensureUnusedCapacity(gpa, 3 + case_block.instructions.info.len);
                     cases_extra.appendAssumeCapacity(1); // items_len
-                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.items.len));
+                    cases_extra.appendAssumeCapacity(@intCast(case_block.instructions.info.len));
                     cases_extra.appendAssumeCapacity(@intFromEnum(Air.Inst.Ref.bool_false));
-                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+                    cases_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
                 }
             },
             else => return sema.fail(block, special_prong_src, "cannot enumerate values of type '{}' for 'inline else'", .{
@@ -13107,31 +13107,31 @@ fn analyzeSwitchRuntimeBlock(
         }
 
         if (is_first) {
-            final_else_body = case_block.instructions.items;
+            final_else_body = case_block.instructions.sliceConst();
         } else {
             try sema.air_extra.ensureUnusedCapacity(gpa, prev_then_body.len +
-                @typeInfo(Air.CondBr).Struct.fields.len + case_block.instructions.items.len);
+                @typeInfo(Air.CondBr).Struct.fields.len + case_block.instructions.info.len);
 
             sema.air_instructions.items(.data)[@intFromEnum(prev_cond_br)].pl_op.payload =
                 sema.addExtraAssumeCapacity(Air.CondBr{
                 .then_body_len = @intCast(prev_then_body.len),
-                .else_body_len = @intCast(case_block.instructions.items.len),
+                .else_body_len = @intCast(case_block.instructions.info.len),
             });
             sema.air_extra.appendSliceAssumeCapacity(@ptrCast(prev_then_body));
-            sema.air_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.items));
+            sema.air_extra.appendSliceAssumeCapacity(@ptrCast(case_block.instructions.sliceConst()));
             final_else_body = first_else_body;
         }
     }
 
     try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.SwitchBr).Struct.fields.len +
-        cases_extra.items.len + final_else_body.len);
+        cases_extra.info.len + final_else_body.len);
 
     const payload_index = sema.addExtraAssumeCapacity(Air.SwitchBr{
         .cases_len = @intCast(cases_len),
         .else_body_len = @intCast(final_else_body.len),
     });
 
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(cases_extra.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(cases_extra.sliceConst()));
     sema.air_extra.appendSliceAssumeCapacity(@ptrCast(final_else_body));
 
     return try child_block.addInst(.{
@@ -13151,7 +13151,7 @@ fn resolveSwitchComptime(
     operand_val: Value,
     operand_ty: Type,
     special: SpecialProng,
-    case_vals: std.ArrayListUnmanaged(Air.Inst.Ref),
+    case_vals: std.ArrayListInlineUnmanaged(Air.Inst.Ref),
     scalar_cases_len: u32,
     multi_cases_len: u32,
     err_set: bool,
@@ -13169,7 +13169,7 @@ fn resolveSwitchComptime(
             const body = sema.code.bodySlice(extra_index, info.body_len);
             extra_index += info.body_len;
 
-            const item = case_vals.items[scalar_i];
+            const item = case_vals.sliceConst()[scalar_i];
             const item_val = sema.resolveConstDefinedValue(child_block, .unneeded, item, undefined) catch unreachable;
             if (operand_val.eql(item_val, operand_ty, sema.mod)) {
                 if (err_set) try sema.maybeErrorUnwrapComptime(child_block, body, cond_operand);
@@ -13199,7 +13199,7 @@ fn resolveSwitchComptime(
             extra_index += 1 + items_len;
             const body = sema.code.bodySlice(extra_index + 2 * ranges_len, info.body_len);
 
-            const items = case_vals.items[case_val_idx..][0..items_len];
+            const items = case_vals.sliceConst()[case_val_idx..][0..items_len];
             case_val_idx += items_len;
 
             for (items) |item| {
@@ -13223,7 +13223,7 @@ fn resolveSwitchComptime(
 
             var range_i: usize = 0;
             while (range_i < ranges_len) : (range_i += 1) {
-                const range_items = case_vals.items[case_val_idx..][0..2];
+                const range_items = case_vals.sliceConst()[case_val_idx..][0..2];
                 extra_index += 2;
                 case_val_idx += 2;
 
@@ -13288,7 +13288,7 @@ const RangeSetUnhandledIterator = struct {
             .cur = (try ty.minInt(mod, ty)).toIntern(),
             .max = (try ty.maxInt(mod, ty)).toIntern(),
             .range_i = 0,
-            .ranges = range_set.ranges.items,
+            .ranges = range_set.ranges.sliceConst(),
             .limbs = if (needed_limbs > preallocated_limbs)
                 try sema.arena.alloc(math.big.Limb, needed_limbs)
             else
@@ -13390,7 +13390,7 @@ fn validateErrSetSwitch(
     sema: *Sema,
     block: *Block,
     seen_errors: *SwitchErrorSet,
-    case_vals: *std.ArrayListUnmanaged(Air.Inst.Ref),
+    case_vals: *std.ArrayListInlineUnmanaged(Air.Inst.Ref),
     operand_ty: Type,
     inst_data: std.meta.FieldType(Zir.Inst.Data, .pl_node),
     scalar_cases_len: u32,
@@ -17150,7 +17150,7 @@ fn zirAsm(
         buffer[o.c.len] = 0;
         @memcpy(buffer[o.c.len + 1 ..][0..o.n.len], o.n);
         buffer[o.c.len + 1 + o.n.len] = 0;
-        sema.air_extra.items.len += (o.c.len + o.n.len + (2 + 3)) / 4;
+        sema.air_extra.info.len += @intCast((o.c.len + o.n.len + (2 + 3)) / 4);
     }
     for (inputs) |input| {
         const buffer = mem.sliceAsBytes(sema.air_extra.unusedCapacitySlice());
@@ -17158,18 +17158,18 @@ fn zirAsm(
         buffer[input.c.len] = 0;
         @memcpy(buffer[input.c.len + 1 ..][0..input.n.len], input.n);
         buffer[input.c.len + 1 + input.n.len] = 0;
-        sema.air_extra.items.len += (input.c.len + input.n.len + (2 + 3)) / 4;
+        sema.air_extra.info.len += @intCast((input.c.len + input.n.len + (2 + 3)) / 4);
     }
     for (clobbers) |clobber| {
         const buffer = mem.sliceAsBytes(sema.air_extra.unusedCapacitySlice());
         @memcpy(buffer[0..clobber.len], clobber);
         buffer[clobber.len] = 0;
-        sema.air_extra.items.len += clobber.len / 4 + 1;
+        sema.air_extra.info.len += @intCast(clobber.len / 4 + 1);
     }
     {
         const buffer = mem.sliceAsBytes(sema.air_extra.unusedCapacitySlice());
         @memcpy(buffer[0..asm_source.len], asm_source);
-        sema.air_extra.items.len += (asm_source.len + 3) / 4;
+        sema.air_extra.info.len += @intCast((asm_source.len + 3) / 4);
     }
     return asm_air;
 }
@@ -18775,7 +18775,7 @@ fn typeInfoDecls(
     };
     try sema.queueFullTypeResolution(declaration_ty);
 
-    var decl_vals = std.ArrayList(InternPool.Index).init(gpa);
+    var decl_vals = std.ArrayListInline(InternPool.Index).init(gpa);
     defer decl_vals.deinit();
 
     var seen_namespaces = std.AutoHashMap(*Namespace, void).init(gpa);
@@ -18784,12 +18784,12 @@ fn typeInfoDecls(
     try sema.typeInfoNamespaceDecls(block, opt_namespace, declaration_ty, &decl_vals, &seen_namespaces);
 
     const array_decl_ty = try mod.arrayType(.{
-        .len = decl_vals.items.len,
+        .len = decl_vals.unmanaged.info.len,
         .child = declaration_ty.toIntern(),
     });
     const new_decl_val = try mod.intern(.{ .aggregate = .{
         .ty = array_decl_ty.toIntern(),
-        .storage = .{ .elems = decl_vals.items },
+        .storage = .{ .elems = decl_vals.sliceConst() },
     } });
     const slice_ty = (try sema.ptrType(.{
         .child = declaration_ty.toIntern(),
@@ -18809,7 +18809,7 @@ fn typeInfoDecls(
             } },
             .byte_offset = 0,
         } }),
-        .len = (try mod.intValue(Type.usize, decl_vals.items.len)).toIntern(),
+        .len = (try mod.intValue(Type.usize, decl_vals.unmanaged.info.len)).toIntern(),
     } });
 }
 
@@ -18818,7 +18818,7 @@ fn typeInfoNamespaceDecls(
     block: *Block,
     opt_namespace_index: InternPool.OptionalNamespaceIndex,
     declaration_ty: Type,
-    decl_vals: *std.ArrayList(InternPool.Index),
+    decl_vals: *std.ArrayListInline(InternPool.Index),
     seen_namespaces: *std.AutoHashMap(*Namespace, void),
 ) !void {
     const mod = sema.mod;
@@ -19119,15 +19119,15 @@ fn finishCondBr(
     const gpa = sema.gpa;
 
     try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.CondBr).Struct.fields.len +
-        then_block.instructions.items.len + else_block.instructions.items.len +
-        @typeInfo(Air.Block).Struct.fields.len + child_block.instructions.items.len + 1);
+        then_block.instructions.info.len + else_block.instructions.info.len +
+        @typeInfo(Air.Block).Struct.fields.len + child_block.instructions.info.len + 1);
 
     const cond_br_payload = sema.addExtraAssumeCapacity(Air.CondBr{
-        .then_body_len = @intCast(then_block.instructions.items.len),
-        .else_body_len = @intCast(else_block.instructions.items.len),
+        .then_body_len = @intCast(then_block.instructions.info.len),
+        .else_body_len = @intCast(else_block.instructions.info.len),
     });
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(then_block.instructions.items));
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(else_block.instructions.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(then_block.instructions.sliceConst()));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(else_block.instructions.sliceConst()));
 
     _ = try child_block.addInst(.{ .tag = .cond_br, .data = .{ .pl_op = .{
         .operand = cond,
@@ -19135,9 +19135,9 @@ fn finishCondBr(
     } } });
 
     sema.air_instructions.items(.data)[@intFromEnum(block_inst)].ty_pl.payload = sema.addExtraAssumeCapacity(
-        Air.Block{ .body_len = @intCast(child_block.instructions.items.len) },
+        Air.Block{ .body_len = @intCast(child_block.instructions.info.len) },
     );
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(child_block.instructions.sliceConst()));
 
     try parent_block.instructions.append(gpa, block_inst);
     return block_inst.toRef();
@@ -19292,19 +19292,19 @@ fn zirCondbr(
         try sema.analyzeBodyRuntimeBreak(&sub_block, else_body);
     }
     try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.CondBr).Struct.fields.len +
-        true_instructions.len + sub_block.instructions.items.len);
+        true_instructions.len + sub_block.instructions.info.len);
     _ = try parent_block.addInst(.{
         .tag = .cond_br,
         .data = .{ .pl_op = .{
             .operand = cond,
             .payload = sema.addExtraAssumeCapacity(Air.CondBr{
                 .then_body_len = @intCast(true_instructions.len),
-                .else_body_len = @intCast(sub_block.instructions.items.len),
+                .else_body_len = @intCast(sub_block.instructions.info.len),
             }),
         } },
     });
     sema.air_extra.appendSliceAssumeCapacity(@ptrCast(true_instructions));
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(sub_block.instructions.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(sub_block.instructions.sliceConst()));
 }
 
 fn zirTry(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileError!Air.Inst.Ref {
@@ -19340,17 +19340,17 @@ fn zirTry(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileError!
     try sema.analyzeBodyInner(&sub_block, body);
 
     try sema.air_extra.ensureUnusedCapacity(sema.gpa, @typeInfo(Air.Try).Struct.fields.len +
-        sub_block.instructions.items.len);
+        sub_block.instructions.info.len);
     const try_inst = try parent_block.addInst(.{
         .tag = .@"try",
         .data = .{ .pl_op = .{
             .operand = err_union,
             .payload = sema.addExtraAssumeCapacity(Air.Try{
-                .body_len = @intCast(sub_block.instructions.items.len),
+                .body_len = @intCast(sub_block.instructions.info.len),
             }),
         } },
     });
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(sub_block.instructions.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(sub_block.instructions.sliceConst()));
     return try_inst;
 }
 
@@ -19400,18 +19400,18 @@ fn zirTryPtr(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileErr
     });
     const res_ty_ref = Air.internedToRef(res_ty.toIntern());
     try sema.air_extra.ensureUnusedCapacity(sema.gpa, @typeInfo(Air.TryPtr).Struct.fields.len +
-        sub_block.instructions.items.len);
+        sub_block.instructions.info.len);
     const try_inst = try parent_block.addInst(.{
         .tag = .try_ptr,
         .data = .{ .ty_pl = .{
             .ty = res_ty_ref,
             .payload = sema.addExtraAssumeCapacity(Air.TryPtr{
                 .ptr = operand,
-                .body_len = @intCast(sub_block.instructions.items.len),
+                .body_len = @intCast(sub_block.instructions.info.len),
             }),
         } },
     });
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(sub_block.instructions.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(sub_block.instructions.sliceConst()));
     return try_inst;
 }
 
@@ -19644,15 +19644,15 @@ fn retWithErrTracing(
     _ = try else_block.addUnOp(ret_tag, operand);
 
     try sema.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.CondBr).Struct.fields.len +
-        then_block.instructions.items.len + else_block.instructions.items.len +
+        then_block.instructions.info.len + else_block.instructions.info.len +
         @typeInfo(Air.Block).Struct.fields.len + 1);
 
     const cond_br_payload = sema.addExtraAssumeCapacity(Air.CondBr{
-        .then_body_len = @intCast(then_block.instructions.items.len),
-        .else_body_len = @intCast(else_block.instructions.items.len),
+        .then_body_len = @intCast(then_block.instructions.info.len),
+        .else_body_len = @intCast(else_block.instructions.info.len),
     });
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(then_block.instructions.items));
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(else_block.instructions.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(then_block.instructions.sliceConst()));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(else_block.instructions.sliceConst()));
 
     _ = try block.addInst(.{ .tag = .cond_br, .data = .{ .pl_op = .{
         .operand = is_non_err,
@@ -19735,8 +19735,8 @@ fn restoreErrRetIndex(sema: *Sema, start_block: *Block, src: LazySrcLoc, target_
 
         const saved_index_val = try sema.resolveDefinedValue(start_block, src, saved_index);
         const saved_index_int = saved_index_val.?.toUnsignedInt(mod);
-        assert(saved_index_int <= sema.comptime_err_ret_trace.items.len);
-        sema.comptime_err_ret_trace.items.len = @intCast(saved_index_int);
+        assert(saved_index_int <= sema.comptime_err_ret_trace.unmanaged.info.len);
+        sema.comptime_err_ret_trace.unmanaged.info.len = @intCast(saved_index_int);
         return;
     }
 
@@ -27055,7 +27055,7 @@ fn addSafetyCheckExtra(
         1 + // The main block only needs space for the cond_br.
         @typeInfo(Air.CondBr).Struct.fields.len +
         1 + // The ok branch of the cond_br only needs space for the br.
-        fail_block.instructions.items.len);
+        fail_block.instructions.info.len);
 
     try sema.air_instructions.ensureUnusedCapacity(gpa, 3);
     const block_inst: Air.Inst.Index = @enumFromInt(sema.air_instructions.len);
@@ -27078,12 +27078,12 @@ fn addSafetyCheckExtra(
             .operand = ok,
             .payload = sema.addExtraAssumeCapacity(Air.CondBr{
                 .then_body_len = 1,
-                .else_body_len = @intCast(fail_block.instructions.items.len),
+                .else_body_len = @intCast(fail_block.instructions.info.len),
             }),
         } },
     });
     sema.air_extra.appendAssumeCapacity(@intFromEnum(br_inst));
-    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(fail_block.instructions.items));
+    sema.air_extra.appendSliceAssumeCapacity(@ptrCast(fail_block.instructions.sliceConst()));
 
     sema.air_instructions.appendAssumeCapacity(.{
         .tag = .br,
@@ -30341,7 +30341,7 @@ fn coerceInMemoryAllowedErrorSets(
         }
     }
 
-    var missing_error_buf = std.ArrayList(InternPool.NullTerminatedString).init(gpa);
+    var missing_error_buf = std.ArrayListInline(InternPool.NullTerminatedString).init(gpa);
     defer missing_error_buf.deinit();
 
     switch (src_ty.toIntern()) {
@@ -30366,9 +30366,9 @@ fn coerceInMemoryAllowedErrorSets(
                     }
                 }
 
-                if (missing_error_buf.items.len != 0) {
+                if (missing_error_buf.unmanaged.info.len != 0) {
                     return InMemoryCoercionResult{
-                        .missing_error = try sema.arena.dupe(InternPool.NullTerminatedString, missing_error_buf.items),
+                        .missing_error = try sema.arena.dupe(InternPool.NullTerminatedString, missing_error_buf.sliceConst()),
                     };
                 }
 
@@ -30381,9 +30381,9 @@ fn coerceInMemoryAllowedErrorSets(
                     }
                 }
 
-                if (missing_error_buf.items.len != 0) {
+                if (missing_error_buf.unmanaged.info.len != 0) {
                     return InMemoryCoercionResult{
-                        .missing_error = try sema.arena.dupe(InternPool.NullTerminatedString, missing_error_buf.items),
+                        .missing_error = try sema.arena.dupe(InternPool.NullTerminatedString, missing_error_buf.sliceConst()),
                     };
                 }
 
@@ -35270,7 +35270,7 @@ fn semaBackingIntType(mod: *Module, struct_type: InternPool.LoadedStructType) Co
     var analysis_arena = std.heap.ArenaAllocator.init(gpa);
     defer analysis_arena.deinit();
 
-    var comptime_err_ret_trace = std.ArrayList(Module.SrcLoc).init(gpa);
+    var comptime_err_ret_trace = std.ArrayListInline(Module.SrcLoc).init(gpa);
     defer comptime_err_ret_trace.deinit();
 
     var sema: Sema = .{
@@ -35298,7 +35298,7 @@ fn semaBackingIntType(mod: *Module, struct_type: InternPool.LoadedStructType) Co
         .inlining = null,
         .is_comptime = true,
     };
-    defer assert(block.instructions.items.len == 0);
+    defer assert(block.instructions.info.len == 0);
 
     const fields_bit_sum = blk: {
         var accumulator: u64 = 0;
@@ -36124,7 +36124,7 @@ fn semaStructFields(
         },
     };
 
-    var comptime_err_ret_trace = std.ArrayList(Module.SrcLoc).init(gpa);
+    var comptime_err_ret_trace = std.ArrayListInline(Module.SrcLoc).init(gpa);
     defer comptime_err_ret_trace.deinit();
 
     var sema: Sema = .{
@@ -36152,7 +36152,7 @@ fn semaStructFields(
         .inlining = null,
         .is_comptime = true,
     };
-    defer assert(block_scope.instructions.items.len == 0);
+    defer assert(block_scope.instructions.info.len == 0);
 
     const Field = struct {
         type_body_len: u32 = 0,
@@ -36372,7 +36372,7 @@ fn semaStructFieldInits(
     const zir_index = struct_type.zir_index.unwrap().?.resolve(ip);
     const fields_len, const small, var extra_index = structZirInfo(zir, zir_index);
 
-    var comptime_err_ret_trace = std.ArrayList(Module.SrcLoc).init(gpa);
+    var comptime_err_ret_trace = std.ArrayListInline(Module.SrcLoc).init(gpa);
     defer comptime_err_ret_trace.deinit();
 
     var sema: Sema = .{
@@ -36400,7 +36400,7 @@ fn semaStructFieldInits(
         .inlining = null,
         .is_comptime = true,
     };
-    defer assert(block_scope.instructions.items.len == 0);
+    defer assert(block_scope.instructions.info.len == 0);
 
     const Field = struct {
         type_body_len: u32 = 0,
@@ -36560,7 +36560,7 @@ fn semaUnionFields(mod: *Module, arena: Allocator, union_type: InternPool.Loaded
 
     const decl = mod.declPtr(decl_index);
 
-    var comptime_err_ret_trace = std.ArrayList(Module.SrcLoc).init(gpa);
+    var comptime_err_ret_trace = std.ArrayListInline(Module.SrcLoc).init(gpa);
     defer comptime_err_ret_trace.deinit();
 
     var sema: Sema = .{
@@ -36588,7 +36588,7 @@ fn semaUnionFields(mod: *Module, arena: Allocator, union_type: InternPool.Loaded
         .inlining = null,
         .is_comptime = true,
     };
-    defer assert(block_scope.instructions.items.len == 0);
+    defer assert(block_scope.instructions.info.len == 0);
 
     if (body.len != 0) {
         _ = try sema.analyzeInlineBody(&block_scope, body, zir_index);
@@ -36644,8 +36644,8 @@ fn semaUnionFields(mod: *Module, arena: Allocator, union_type: InternPool.Loaded
         enum_field_names = try sema.arena.alloc(InternPool.NullTerminatedString, fields_len);
     }
 
-    var field_types: std.ArrayListUnmanaged(InternPool.Index) = .{};
-    var field_aligns: std.ArrayListUnmanaged(InternPool.Alignment) = .{};
+    var field_types: std.ArrayListInlineUnmanaged(InternPool.Index) = .{};
+    var field_aligns: std.ArrayListInlineUnmanaged(InternPool.Alignment) = .{};
 
     try field_types.ensureTotalCapacityPrecise(sema.arena, fields_len);
     if (small.any_aligned_fields)
@@ -36873,8 +36873,8 @@ fn semaUnionFields(mod: *Module, arena: Allocator, union_type: InternPool.Loaded
         }
     }
 
-    union_type.setFieldTypes(ip, field_types.items);
-    union_type.setFieldAligns(ip, field_aligns.items);
+    union_type.setFieldTypes(ip, field_types.sliceConst());
+    union_type.setFieldAligns(ip, field_aligns.sliceConst());
 
     if (explicit_tags_seen.len > 0) {
         const tag_info = ip.loadEnumType(union_type.tagTypePtr(ip).*);
@@ -37428,7 +37428,7 @@ fn typeOf(sema: *Sema, inst: Air.Inst.Ref) Type {
 pub fn getTmpAir(sema: Sema) Air {
     return .{
         .instructions = sema.air_instructions.slice(),
-        .extra = sema.air_extra.items,
+        .extra = sema.air_extra.sliceConst(),
     };
 }
 
@@ -37440,7 +37440,7 @@ pub fn addExtra(sema: *Sema, extra: anytype) Allocator.Error!u32 {
 
 pub fn addExtraAssumeCapacity(sema: *Sema, extra: anytype) u32 {
     const fields = std.meta.fields(@TypeOf(extra));
-    const result: u32 = @intCast(sema.air_extra.items.len);
+    const result: u32 = @intCast(sema.air_extra.info.len);
     inline for (fields) |field| {
         sema.air_extra.appendAssumeCapacity(switch (field.type) {
             u32 => @field(extra, field.name),
