@@ -1096,7 +1096,7 @@ fn scalarizeBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, form: Scalariz
     _ = condbr.else_block.addBinOp(l, .store, index_ptr, new_index_val);
     _ = condbr.else_block.add(l, .{
         .tag = .repeat,
-        .data = .{ .repeat = .{ .loop_inst = loop.inst } },
+        .data = .{ .repeat = .{ .loop_inst = loop.inst, .loop_hint = .none } },
     });
 
     try condbr.finish(l);
@@ -1396,7 +1396,7 @@ fn addScalarizedShuffle(
     _ = condbr.else_block.addBinOp(l, .store, index_ptr, new_index_val);
     _ = condbr.else_block.add(l, .{
         .tag = .repeat,
-        .data = .{ .repeat = .{ .loop_inst = loop.inst } },
+        .data = .{ .repeat = .{ .loop_inst = loop.inst, .loop_hint = .none } },
     });
 
     try condbr.finish(l);
@@ -1535,7 +1535,7 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
         _ = condbr.else_block.addBinOp(l, .store, index_ptr, new_index_val);
         _ = condbr.else_block.add(l, .{
             .tag = .repeat,
-            .data = .{ .repeat = .{ .loop_inst = loop.inst } },
+            .data = .{ .repeat = .{ .loop_inst = loop.inst, .loop_hint = .none } },
         });
 
         try condbr.finish(l);
@@ -1639,7 +1639,7 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
         _ = condbr.else_block.addBinOp(l, .store, index_ptr, new_index_val);
         _ = condbr.else_block.add(l, .{
             .tag = .repeat,
-            .data = .{ .repeat = .{ .loop_inst = loop.inst } },
+            .data = .{ .repeat = .{ .loop_inst = loop.inst, .loop_hint = .none } },
         });
 
         try condbr.finish(l);
@@ -1786,7 +1786,7 @@ fn scalarizeOverflowBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!
     _ = condbr.else_block.addBinOp(l, .store, index_ptr, new_index_val);
     _ = condbr.else_block.add(l, .{
         .tag = .repeat,
-        .data = .{ .repeat = .{ .loop_inst = loop.inst } },
+        .data = .{ .repeat = .{ .loop_inst = loop.inst, .loop_hint = .none } },
     });
 
     try condbr.finish(l);
@@ -1908,7 +1908,7 @@ fn scalarizeReduceBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, optimize
     _ = condbr.else_block.addBinOp(l, .store, index_ptr, new_index_val);
     _ = condbr.else_block.add(l, .{
         .tag = .repeat,
-        .data = .{ .repeat = .{ .loop_inst = loop.inst } },
+        .data = .{ .repeat = .{ .loop_inst = loop.inst, .loop_hint = .none } },
     });
 
     try condbr.finish(l);

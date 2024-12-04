@@ -567,6 +567,7 @@ const Writer = struct {
             .work_group_size,
             .work_group_id,
             .branch_hint,
+            .loop_hint,
             .float_op_result_ty,
             .reify_tuple,
             .reify_pointer_sentinel_ty,
