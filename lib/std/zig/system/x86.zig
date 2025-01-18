@@ -440,6 +440,7 @@ fn detectNativeFeatures(cpu: *Target.Cpu, os_tag: Target.Os.Tag) void {
         setFeature(cpu, .avx2, bit(leaf.ebx, 5) and has_avx_save);
         setFeature(cpu, .smep, bit(leaf.ebx, 7));
         setFeature(cpu, .bmi2, bit(leaf.ebx, 8));
+        setFeature(cpu, .ermsb, bit(leaf.ebx, 9));
         setFeature(cpu, .invpcid, bit(leaf.ebx, 10));
         setFeature(cpu, .rtm, bit(leaf.ebx, 11));
         // AVX512 is only supported if the OS supports the context save for it.
@@ -477,6 +478,7 @@ fn detectNativeFeatures(cpu: *Target.Cpu, os_tag: Target.Os.Tag) void {
         setFeature(cpu, .movdir64b, bit(leaf.ecx, 28));
         setFeature(cpu, .enqcmd, bit(leaf.ecx, 29));
 
+        setFeature(cpu, .fsrm, bit(leaf.edx, 4));
         // There are two CPUID leafs which information associated with the pconfig
         // instruction:
         // EAX=0x7, ECX=0x0 indicates the availability of the instruction (via the 18th
