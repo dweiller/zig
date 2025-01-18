@@ -3,6 +3,8 @@ const assert = std.debug.assert;
 const common = @import("./common.zig");
 const builtin = @import("builtin");
 
+const x86 = @import("memcpy/x86.zig");
+
 comptime {
     if (builtin.object_format != .c) {
         const export_options: std.builtin.ExportOptions = .{
@@ -24,8 +26,17 @@ comptime {
     assert(std.math.isPowerOfTwo(@sizeOf(Element)));
 }
 
-fn memcpySmall(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) callconv(.c) ?[*]u8 {
+const runtime_feature_detection = false;
+
+fn memcpySmall(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) callconv(.C) ?[*]u8 {
     @setRuntimeSafety(false);
+
+    if (comptime builtin.cpu.arch.isX86()) {
+        if (comptime std.Target.x86.featureSetHas(builtin.cpu.features, .fsrm)) {
+            x86.rep_movsb(dest.?, src.?, len);
+            return dest;
+        }
+    }
 
     for (0..len) |i| {
         dest.?[i] = src.?[i];
@@ -36,6 +47,21 @@ fn memcpySmall(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) call
 
 fn memcpyFast(noalias dest: ?[*]u8, noalias src: ?[*]const u8, len: usize) callconv(.c) ?[*]u8 {
     @setRuntimeSafety(false);
+
+    if (comptime builtin.cpu.arch.isX86()) {
+        if (runtime_feature_detection) {
+            if (!x86.detection_done) {
+                x86.detectFeatures();
+            }
+            if (x86.has_fsrm) {
+                x86.rep_movsb(dest.?, src.?, len);
+                return dest;
+            }
+        } else if (comptime std.Target.x86.featureSetHas(builtin.cpu.features, .fsrm)) {
+            x86.rep_movsb(dest.?, src.?, len);
+            return dest;
+        }
+    }
 
     const small_limit = 2 * @sizeOf(Element);
 
@@ -109,6 +135,18 @@ inline fn copyForwards(
     const n = len - alignment_offset;
     const d = dest + alignment_offset;
     const s = src + alignment_offset;
+
+    if (comptime builtin.cpu.arch.isX86()) {
+        if (runtime_feature_detection) {
+            if (x86.has_ermsb) {
+                x86.rep_movsb(d, s, n);
+                return;
+            }
+        } else if (comptime std.Target.x86.featureSetHas(builtin.cpu.features, .ermsb)) {
+            x86.rep_movsb(d, s, n);
+            return;
+        }
+    }
 
     copyBlocksAlignedSource(@ptrCast(d), @ptrCast(@alignCast(s)), n);
 
