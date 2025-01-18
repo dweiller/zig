@@ -551,7 +551,7 @@ const CpuidLeaf = packed struct {
 /// C code in inline assembly.
 extern fn zig_x86_cpuid(leaf_id: u32, subid: u32, eax: *u32, ebx: *u32, ecx: *u32, edx: *u32) callconv(.c) void;
 
-fn cpuid(leaf_id: u32, subid: u32) CpuidLeaf {
+pub fn cpuid(leaf_id: u32, subid: u32) CpuidLeaf {
     // valid for both x86 and x86_64
     var eax: u32 = undefined;
     var ebx: u32 = undefined;
