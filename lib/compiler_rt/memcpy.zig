@@ -4,6 +4,7 @@ const common = @import("./common.zig");
 const builtin = @import("builtin");
 
 const x86 = @import("memcpy/x86.zig");
+const arm = @import("memcpy/arm.zig");
 
 comptime {
     if (builtin.object_format != .c) {
@@ -129,6 +130,13 @@ inline fn copyForwards(
     len: usize,
 ) void {
     @setRuntimeSafety(false);
+
+    if (comptime builtin.cpu.arch.isAARCH64()) {
+        if (comptime std.Target.aarch64.featureSetHas(builtin.cpu.features, .mops)) {
+            arm.cpyfp_cpyfm_cpyfe(dest, src, len);
+            return;
+        }
+    }
 
     copyFixedLength(dest, src, @sizeOf(Element));
     const alignment_offset = @alignOf(Element) - @intFromPtr(src) % @alignOf(Element);
