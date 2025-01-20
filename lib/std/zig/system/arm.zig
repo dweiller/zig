@@ -201,7 +201,7 @@ pub const aarch64 = struct {
     /// 9  -> ID_AA64MMFR0_EL1
     /// 10 -> ID_AA64MMFR1_EL1
     /// 11 -> ID_AA64MMFR2_EL1
-    pub fn detectNativeCpuAndFeatures(arch: Target.Cpu.Arch, registers: [12]u64) ?Target.Cpu {
+    pub fn detectNativeCpuAndFeatures(arch: Target.Cpu.Arch, registers: [13]u64) ?Target.Cpu {
         const info = detectNativeCoreInfo(registers[0]);
         const model = cpu_models.isKnown(info, true) orelse return null;
 
@@ -211,7 +211,7 @@ pub const aarch64 = struct {
             .features = Target.Cpu.Feature.Set.empty,
         };
 
-        detectNativeCpuFeatures(&cpu, registers[1..12]);
+        detectNativeCpuFeatures(&cpu, registers[1..13]);
         addInstructionFusions(&cpu, info);
 
         return cpu;
@@ -251,10 +251,11 @@ pub const aarch64 = struct {
     /// 5  -> ID_AA64AFR1_EL1
     /// 6  -> ID_AA64ISAR0_EL1
     /// 7  -> ID_AA64ISAR1_EL1
-    /// 8  -> ID_AA64MMFR0_EL1
-    /// 9  -> ID_AA64MMFR1_EL1
-    /// 10 -> ID_AA64MMFR2_EL1
-    fn detectNativeCpuFeatures(cpu: *Target.Cpu, registers: *const [11]u64) void {
+    /// 8  -> ID_AA64ISAR2_EL1
+    /// 9  -> ID_AA64MMFR0_EL1
+    /// 10  -> ID_AA64MMFR1_EL1
+    /// 11 -> ID_AA64MMFR2_EL1
+    fn detectNativeCpuFeatures(cpu: *Target.Cpu, registers: *const [12]u64) void {
         // ID_AA64PFR0_EL1
         setFeature(cpu, .dit, bitField(registers[0], 48) >= 1);
         setFeature(cpu, .am, bitField(registers[0], 44) >= 1);
@@ -316,21 +317,24 @@ pub const aarch64 = struct {
         setFeature(cpu, .ccpp, bitField(registers[7], 0) >= 1);
         setFeature(cpu, .ccdp, bitField(registers[7], 0) >= 2);
 
+        // ID_AA64ISAR2_EL1
+        setFeature(cpu, .mops, bitField(registers[8], 16) >= 1);
+
         // ID_AA64MMFR0_EL1
-        setFeature(cpu, .ecv, bitField(registers[8], 60) >= 1);
-        setFeature(cpu, .fgt, bitField(registers[8], 56) >= 1);
+        setFeature(cpu, .ecv, bitField(registers[9], 60) >= 1);
+        setFeature(cpu, .fgt, bitField(registers[9], 56) >= 1);
 
         // ID_AA64MMFR1_EL1
-        setFeature(cpu, .pan, bitField(registers[9], 20) >= 1);
-        setFeature(cpu, .pan_rwv, bitField(registers[9], 20) >= 2);
-        setFeature(cpu, .lor, bitField(registers[9], 16) >= 1);
-        setFeature(cpu, .vh, bitField(registers[9], 8) >= 1);
-        setFeature(cpu, .contextidr_el2, bitField(registers[9], 8) >= 1);
+        setFeature(cpu, .pan, bitField(registers[10], 20) >= 1);
+        setFeature(cpu, .pan_rwv, bitField(registers[10], 20) >= 2);
+        setFeature(cpu, .lor, bitField(registers[10], 16) >= 1);
+        setFeature(cpu, .vh, bitField(registers[10], 8) >= 1);
+        setFeature(cpu, .contextidr_el2, bitField(registers[10], 8) >= 1);
 
         // ID_AA64MMFR2_EL1
-        setFeature(cpu, .nv, bitField(registers[10], 24) >= 1);
-        setFeature(cpu, .ccidx, bitField(registers[10], 20) >= 1);
-        setFeature(cpu, .uaops, bitField(registers[10], 4) >= 1);
+        setFeature(cpu, .nv, bitField(registers[11], 24) >= 1);
+        setFeature(cpu, .ccidx, bitField(registers[11], 20) >= 1);
+        setFeature(cpu, .uaops, bitField(registers[11], 4) >= 1);
     }
 
     fn addInstructionFusions(cpu: *Target.Cpu, info: CoreInfo) void {

@@ -458,7 +458,7 @@ pub fn detectNativeCpuAndFeatures(io: Io) ?Target.Cpu {
             return ArmCpuinfoParser.parse(current_arch, &file_reader.interface) catch null;
         },
         .aarch64, .aarch64_be => {
-            const registers = [12]u64{
+            const registers = [13]u64{
                 getAArch64CpuFeature("MIDR_EL1"),
                 getAArch64CpuFeature("ID_AA64PFR0_EL1"),
                 getAArch64CpuFeature("ID_AA64PFR1_EL1"),
@@ -468,6 +468,7 @@ pub fn detectNativeCpuAndFeatures(io: Io) ?Target.Cpu {
                 getAArch64CpuFeature("ID_AA64AFR1_EL1"),
                 getAArch64CpuFeature("ID_AA64ISAR0_EL1"),
                 getAArch64CpuFeature("ID_AA64ISAR1_EL1"),
+                getAArch64CpuFeature("ID_AA64ISAR2_EL1"),
                 getAArch64CpuFeature("ID_AA64MMFR0_EL1"),
                 getAArch64CpuFeature("ID_AA64MMFR1_EL1"),
                 getAArch64CpuFeature("ID_AA64MMFR2_EL1"),

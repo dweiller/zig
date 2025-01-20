@@ -238,7 +238,10 @@ pub fn detectNativeCpuAndFeatures() ?Target.Cpu {
             var i: usize = 0;
             while (i < core_count) : (i += 1) {
                 // Backing datastore
-                var registers: [12]u64 = undefined;
+                var registers: [13]u64 = undefined;
+
+                // TODO: check if CP4032 maps to ID_AA64ISAR2_EL1
+                registers[9] = 0;
 
                 // Registry key to system ID register mapping
                 // CP 4000 -> MIDR_EL1
@@ -263,9 +266,9 @@ pub fn detectNativeCpuAndFeatures() ?Target.Cpu {
                     .{ .key = "CP 402D", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[6])) },
                     .{ .key = "CP 4030", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[7])) },
                     .{ .key = "CP 4031", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[8])) },
-                    .{ .key = "CP 4038", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[9])) },
-                    .{ .key = "CP 4039", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[10])) },
-                    .{ .key = "CP 403A", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[11])) },
+                    .{ .key = "CP 4038", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[10])) },
+                    .{ .key = "CP 4039", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[11])) },
+                    .{ .key = "CP 403A", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[12])) },
                 }) catch break :blk null;
 
                 cores[i] = @import("arm.zig").aarch64.detectNativeCpuAndFeatures(current_arch, registers) orelse
