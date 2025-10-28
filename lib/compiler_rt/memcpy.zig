@@ -87,7 +87,7 @@ inline fn copy16ToSmallLimit(
     len: usize,
 ) bool {
     @setRuntimeSafety(false);
-    inline for (2..(std.math.log2(small_limit) + 1) / 2 + 1) |p| {
+    inline for (3..(std.math.log2(small_limit) + 1) / 2 + 1) |p| {
         const limit = 1 << (2 * p);
         if (len < limit) {
             copyRange4(limit / 4, dest, src, len);
