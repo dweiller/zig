@@ -3123,35 +3123,37 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
                 // have been discovered and not filtered out.
 
                 if (comp.test_filter_exact) {
-                    if (comp.test_filters.len > zcu.test_functions.count()) {
+                    var eb: ErrorBundle.Wip = undefined;
+                    try eb.init(gpa);
+
+                    var gathered_test_names: std.StringHashMap(void) = .init(comp.gpa);
+                    defer gathered_test_names.deinit();
+
+                    for (zcu.test_functions.keys()) |test_nav_index| {
                         const ip = &zcu.intern_pool;
+                        const test_nav = ip.getNav(test_nav_index);
+                        const test_nav_name = test_nav.fqn;
+                        const test_name = test_nav_name.toSlice(&zcu.intern_pool);
+                        gathered_test_names.put(test_name);
+                    }
 
-                        var eb: ErrorBundle.Wip = undefined;
-                        eb.init(gpa) catch return comp.setAllocFailure();
+                    assert(comp.test_filters.len >= gathered_test_names.count());
 
-                        seen_test: for (comp.test_filters) |filter| {
-                            for (zcu.test_functions.keys()) |test_nav_index| {
-                                const test_nav = ip.getNav(test_nav_index);
-                                const test_nav_name = test_nav.fqn;
-                                const test_name = test_nav_name.toSlice(&zcu.intern_pool);
-                                if (std.mem.eql(u8, filter, test_name)) {
-                                    continue :seen_test;
-                                }
+                    if (comp.test_filters.len > gathered_test_names.count()) {
+                        for (comp.test_filters) |test_name| {
+                            if (!gathered_test_names.contains(test_name)) {
+                                try eb.addRootErrorMessage(.{
+                                    .msg = try eb.printString(
+                                        "no test '{s}' found",
+                                        .{test_name},
+                                    ),
+                                });
                             }
-                            eb.addRootErrorMessage(.{
-                                .msg = try eb.printString(
-                                    "no test '{s}' found",
-                                    .{filter},
-                                ),
-                            }) catch return comp.setAllocFailure();
                         }
 
-                        const children = eb.toOwnedBundle("") catch
-                            return comp.setAllocFailure();
-                        comp.misc_failures.ensureUnusedCapacity(gpa, 1) catch
-                            return comp.setAllocFailure();
-                        const msg = gpa.dupe(u8, "could not find all requested tests") catch
-                            return comp.setAllocFailure();
+                        const children = try eb.toOwnedBundle("");
+                        try comp.misc_failures.ensureUnusedCapacity(gpa, 1);
+                        const msg = try gpa.dupe(u8, "could not find all requested tests");
                         const gop = comp.misc_failures.getOrPutAssumeCapacity(.test_filter_match);
                         if (gop.found_existing) {
                             gop.value_ptr.deinit(gpa);
